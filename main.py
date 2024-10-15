@@ -6,7 +6,7 @@ import torch
 import torchaudio
 import pyaudio
 import time
-import timeit
+from collections import deque
 
 import einops
 import stable_audio_tools as sd_tools
@@ -37,7 +37,7 @@ def generate(seed: int) -> AudioTensor:
     # Generate stereo audio
     output = sd_tools_generate.generate_diffusion_cond(
         MODEL,
-        steps=20,
+        steps=STEPS,
         cfg_scale=6,
         conditioning=CONDITIONING,
         sample_size=SAMPLE_SIZE,
@@ -53,7 +53,7 @@ def generate(seed: int) -> AudioTensor:
 
     # Peak normalize, clip, 
     max_value = torch.max(torch.abs(output))
-    output = output.to(torch.float32).div(max_value).clamp(-1, 1)
+    output = output.to(torch.float32).div(max_value).clamp(-1, 1) * VOLUME
     return output
 
 def write_to_file(output_file: str, audio: AudioTensor):
@@ -72,11 +72,19 @@ def audio_tensor_to_bytes(audio: AudioTensor) -> bytes:
     torch.save(audio, buffer)
     return buffer.getvalue()
 
+CURRENT_BUFFER = deque()
 # Define callback for playback (1)
 def pyaudio_callback(in_data, frame_count, time_info, status):
+    global CURRENT_BUFFER
     bytes_to_write = get_bytes_to_write(frame_count, CHANNELS, BYTES_PER_CHANNEL)
-    
-    data = OUTPUT_ITER.next_bytes(bytes_to_write)
+
+    data = []
+    while len(data) < bytes_to_write:
+        if len(CURRENT_BUFFER) == 0:
+            CURRENT_BUFFER = deque(AUDIO_DEQUE.next_buffer())
+        data.append(CURRENT_BUFFER.popleft())
+
+    data = bytes(data)
     if len(data) != bytes_to_write:
         print("not enough data written for callback. stream will exit: ", len(data), bytes_to_write)
     return (data, pyaudio.paContinue)
@@ -86,23 +94,26 @@ def next_generator(seed: int) -> Iterator[int]:
         yield generate(seed)
         seed += 1
 
-class AudioIter:
+class AudioDeque:
     def __init__(self) -> None:
-        self.cursor = 0
-        self.audio = bytearray()
+        self.audio = deque()
 
     def enqueue(self, audio: AudioTensor):
+        now = time.time()
         audio_bytes = audio_tensor_to_bytes(audio)
-        self.audio.extend(audio_bytes)
+        total = time.time() - now
+        print(f"took {total} to convert tensor to bytes")
 
-    def next_bytes(self, n: int) -> bytes:
-        start = self.cursor
-        end = (self.cursor + n)
-        self.cursor += n
-        return bytes(self.audio[start : end])
+        now = time.time()
+        self.audio.append(audio_bytes)
+        total = time.time() - now
+        print(f"took {total} to extend bytearray")
+
+    def next_buffer(self) -> bytes:
+        return self.audio.popleft()
 
     def remaining_bytes(self) -> int:
-        return len(self.audio) - self.cursor
+        return len(self.audio)
 
     def remaining_samples(self) -> int:
         return self.remaining_bytes() / (CHANNELS * BYTES_PER_CHANNEL)
@@ -115,10 +126,10 @@ if __name__ == "__main__":
     MODEL_CONFIG_PATH = "C:/Users/a2aar/dev/Python/realtime-neuralnets/stable_audio_open_1.0_config.json"
     MODEL_CKPT_PATH = "C:/Users/a2aar/dev/ComfyUI/ComfyUI_windows_portable/ComfyUI/models/checkpoints/stable_audio_open_1.0.safetensors"
     LENGTH = 10.0
-
+    STEPS = 20
     CHANNELS = 2
     BYTES_PER_CHANNEL = 4 # float32 format used for output stream
-
+    VOLUME = 0.2
     # Load model
     print("Loading config")
     MODEL_CONFIG = load_model_config(MODEL_CONFIG_PATH)
@@ -130,7 +141,7 @@ if __name__ == "__main__":
 
     # Set up text and timing conditioning
     CONDITIONING = [{
-        "prompt": "piano",
+        "prompt": "gentle piano",
         "seconds_start": 0, 
         "seconds_total": LENGTH
     }]
@@ -140,10 +151,11 @@ if __name__ == "__main__":
     generator = next_generator(INIT_SEED)
 
     print("Generating initial buffer...")
-    OUTPUT_ITER = AudioIter()
-    OUTPUT_ITER.enqueue(next(generator))
-    OUTPUT_ITER.enqueue(next(generator))
-    OUTPUT_ITER.enqueue(next(generator))
+    AUDIO_DEQUE = AudioDeque()
+
+    AUDIO_DEQUE.enqueue(next(generator))
+    AUDIO_DEQUE.enqueue(next(generator))
+    AUDIO_DEQUE.enqueue(next(generator))
     # Instantiate PyAudio and initialize PortAudio system resources (2)
     p = pyaudio.PyAudio()
 
@@ -159,11 +171,17 @@ if __name__ == "__main__":
     # Wait for stream to finish (4)
     while stream.is_active():
         time.sleep(0.1)
-        if OUTPUT_ITER.remaining_time() < 30.0:
+        if AUDIO_DEQUE.remaining_time() < 20.0:
             start = time.time()
-            OUTPUT_ITER.enqueue(next(generator))
+            output = next(generator)
             total_time = time.time() - start
-            print(f"enqueued new generation (in {total_time} seconds)")
+            print(f"computed new generation in {total_time} seconds")
+            
+            start = time.time()
+            AUDIO_DEQUE.enqueue(output)
+            total_time = time.time() - start
+            print(f"enqueued in {total_time} seconds")
+
         # print(OUTPUT_ITER.remaining_time(), OUTPUT_ITER.remaining_samples(), OUTPUT_ITER.remaining_bytes())
 
     # Close the stream (5)
@@ -171,6 +189,4 @@ if __name__ == "__main__":
 
     # Release PortAudio system resources (6)
     p.terminate()
-
-    write_to_file("output.wav", OUTPUT)
 
