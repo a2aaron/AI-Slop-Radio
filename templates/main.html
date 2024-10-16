@@ -4,7 +4,88 @@
 </head>
 <body>
     <p>Open Stable Radio</p>
-    <audio controls>
-        <source src="{{ url_for('radio')}}" type="audio/x-wav;codec=pcm">
-    </audio>
+    <textarea id="prompt">piano</textarea>
+    <button id="play">Play</button>
+    <script>
+        const button = document.getElementById("play");
+        const textarea = document.getElementById("prompt");
+        
+        const audioCtx = new window.AudioContext();
+
+        button.onclick = async (event) => {
+            IS_PLAYING = !IS_PLAYING;
+        };
+        
+        const MAX_BUFFER = 30.0;
+        let IS_PLAYING = false;
+        let ALREADY_FETCHING = false;
+        async function run() {
+            if (!IS_PLAYING) {
+                return;
+            }
+            const enoughBuffer = remainingBufferTime() < MAX_BUFFER;
+
+            if (enoughBuffer) {
+                console.log("Won't fetch -- buffer is long enough");
+            } else if (ALREADY_FETCHING) {
+                console.log("Won't fetch -- already fetching");
+            }
+
+            if (enoughBuffer && !ALREADY_FETCHING) {
+                ALREADY_FETCHING = true;
+                await queueFromPrompt();
+                ALREADY_FETCHING = false;
+            }
+        }
+
+        async function queueFromPrompt() {
+            const radio_url = new URL("/radio", window.location);
+            const new_prompt = textarea.value;
+            radio_url.searchParams.set("prompt", new_prompt);
+            sourceNode = await getAudioBufferSourceNode(radio_url);
+            queueAudio(sourceNode);
+        }
+
+        // The remaining amount of time in the buffer
+        function remainingBufferTime() {
+            if (audioCtx.currentTime > LATEST_QUEUED_TIME) {
+                return 0.0;
+            }
+            return LATEST_QUEUED_TIME - audioCtx.currentTime;
+        }
+        
+        // The time, in seconds, of the latest queued up buffer.
+        let LATEST_QUEUED_TIME = 0.0
+        // Gets the latest queued time or the current time, which ever is later.
+        // This should be used to achieve gapless queuing of audio.
+        function getLatestQueuedOrNow() {
+            if (audioCtx.currentTime > LATEST_QUEUED_TIME) {
+                return audioCtx.currentTime;
+            } else {
+                return LATEST_QUEUED_TIME;
+            }
+        }
+
+        // Queue up the given source node to play. If the queue is empty, it plays immediately.
+        function queueAudio(audioBufferSourceNode) {
+            const duration = audioBufferSourceNode.buffer.duration;
+            const queueTime = getLatestQueuedOrNow();
+            console.log(`Queuing audio at ${queueTime}. Remaining buffer time: ${remainingBufferTime()}`);
+            audioBufferSourceNode.start(queueTime);
+            LATEST_QUEUED_TIME = queueTime + duration;
+        }
+
+        // Create an AudioBufferSourceNode from the given URL.
+        async function getAudioBufferSourceNode(url) {
+            const arrayBuffer = await fetch(url).then((res) => res.arrayBuffer());
+            const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+            const source = audioCtx.createBufferSource();
+            source.buffer = audioBuffer
+
+            source.connect(audioCtx.destination);
+            return source;
+        }
+
+        setInterval(run, 1000);
+    </script>
 </body>
