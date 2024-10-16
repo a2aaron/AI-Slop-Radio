@@ -5,33 +5,56 @@
 <body>
     <p>Open Stable Radio</p>
     <textarea id="prompt">piano</textarea>
+    <div>
+        <input type="range" id="volume" name="volume" min="0" max="1" step="any" />
+        <label for="volume">Volume</label>
+      </div>
     <button id="play">Play</button>
     <script>
         const button = document.getElementById("play");
         const textarea = document.getElementById("prompt");
-        
+        const volumeSlider = document.getElementById("volume");
+
         const audioCtx = new window.AudioContext();
+        const gainNode = audioCtx.createGain();
+        gainNode.connect(audioCtx.destination);
+
+        function getDestinationNode() {
+            return gainNode;
+        }
 
         button.onclick = async (event) => {
             IS_PLAYING = !IS_PLAYING;
+            if (IS_PLAYING) {
+                button.innerText = "Stop";
+            } else {
+                button.innerText = "Play";
+            }
         };
+
+        volumeSlider.oninput = (event) => {
+            const new_vol = parseFloat(volumeSlider.value) * parseFloat(volumeSlider.value);
+            gainNode.gain.value = new_vol;
+        }
         
-        const MAX_BUFFER = 30.0;
+        const MAX_BUFFER = 10.0;
         let IS_PLAYING = false;
         let ALREADY_FETCHING = false;
+
         async function run() {
             if (!IS_PLAYING) {
+                console.log("Won't fetch -- not playing");
                 return;
             }
-            const enoughBuffer = remainingBufferTime() < MAX_BUFFER;
+            const enoughBuffer = remainingBufferTime() > MAX_BUFFER;
 
             if (enoughBuffer) {
-                console.log("Won't fetch -- buffer is long enough");
+                console.log("Won't fetch -- buffer is long enough: ", remainingBufferTime());
             } else if (ALREADY_FETCHING) {
                 console.log("Won't fetch -- already fetching");
             }
 
-            if (enoughBuffer && !ALREADY_FETCHING) {
+            if (!enoughBuffer && !ALREADY_FETCHING) {
                 ALREADY_FETCHING = true;
                 await queueFromPrompt();
                 ALREADY_FETCHING = false;
@@ -82,7 +105,7 @@
             const source = audioCtx.createBufferSource();
             source.buffer = audioBuffer
 
-            source.connect(audioCtx.destination);
+            source.connect(getDestinationNode());
             return source;
         }
 
