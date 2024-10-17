@@ -3,18 +3,32 @@
     <title>Open Stable Radio</title>
 </head>
 <body>
-    <p>Open Stable Radio</p>
-    <textarea id="prompt">piano</textarea>
+    <h1>Open Stable Radio</h1>
+    
+    <h2>Controls</h2>
     <div>
-        <input type="range" id="volume" name="volume" min="0" max="1" step="any" />
+        <label for="positive_prompt">Positive Prompt</label>
+        <textarea id="positive_prompt" name="positive_prompt">piano</textarea>
+    </div>
+    <div>
+        <label for="negative_prompt">Negative Prompt</label>
+        <textarea id="negative_prompt" name="negative_prompt"></textarea>
+        <input type="checkbox" id="negative_prompt_enable" name="negative_prompt_enable"></input>
+    </div>
+    <div>
         <label for="volume">Volume</label>
-      </div>
+        <input type="range" id="volume" name="volume" min="0" max="1" step="any" />
+        <span id="volume_slider_display"></span>
+    </div>
     <button id="play">Play</button>
     <script>
-        const button = document.getElementById("play");
-        const textarea = document.getElementById("prompt");
-        const volumeSlider = document.getElementById("volume");
-
+        const play_button = document.getElementById("play");
+        const positive_prompt_textarea = document.getElementById("positive_prompt");
+        const negative_prompt_textarea = document.getElementById("negative_prompt");
+        const negative_prompt_enable_checkbox = document.getElementById("negative_prompt_enable");
+        const volume_slider = document.getElementById("volume");
+        const volume_slider_display = document.getElementById("volume_slider_display");
+        
         const audioCtx = new window.AudioContext();
         const gainNode = audioCtx.createGain();
         gainNode.connect(audioCtx.destination);
@@ -23,18 +37,19 @@
             return gainNode;
         }
 
-        button.onclick = async (event) => {
+        play_button.onclick = async (event) => {
             IS_PLAYING = !IS_PLAYING;
             if (IS_PLAYING) {
-                button.innerText = "Stop";
+                play_button.innerText = "Stop";
             } else {
-                button.innerText = "Play";
+                play_button.innerText = "Play";
             }
         };
 
-        volumeSlider.oninput = (event) => {
-            const new_vol = parseFloat(volumeSlider.value) * parseFloat(volumeSlider.value);
+        volume_slider.oninput = (event) => {
+            const new_vol = parseFloat(volume_slider.value) * parseFloat(volume_slider.value);
             gainNode.gain.value = new_vol;
+            volume_slider_display.innerText = `${(new_vol * 100.0).toFixed(0)}%`;
         }
         
         const MAX_BUFFER = 10.0;
@@ -43,16 +58,9 @@
 
         async function run() {
             if (!IS_PLAYING) {
-                console.log("Won't fetch -- not playing");
                 return;
             }
             const enoughBuffer = remainingBufferTime() > MAX_BUFFER;
-
-            if (enoughBuffer) {
-                console.log("Won't fetch -- buffer is long enough: ", remainingBufferTime());
-            } else if (ALREADY_FETCHING) {
-                console.log("Won't fetch -- already fetching");
-            }
 
             if (!enoughBuffer && !ALREADY_FETCHING) {
                 ALREADY_FETCHING = true;
@@ -63,8 +71,17 @@
 
         async function queueFromPrompt() {
             const radio_url = new URL("/radio", window.location);
-            const new_prompt = textarea.value;
-            radio_url.searchParams.set("prompt", new_prompt);
+            radio_url.searchParams.set("length", 10.0);
+            radio_url.searchParams.set("seed", 0);
+            
+            const positive_prompt = positive_prompt_textarea.value;
+            radio_url.searchParams.set("positive_prompt", positive_prompt);
+
+            const negative_prompt = negative_prompt_textarea.value;
+            const negative_prompt_enable = negative_prompt_enable_checkbox.checked;
+            if (negative_prompt_enable) {
+                radio_url.searchParams.set("negative_prompt", negative_prompt);
+            }
             sourceNode = await getAudioBufferSourceNode(radio_url);
             queueAudio(sourceNode);
         }
