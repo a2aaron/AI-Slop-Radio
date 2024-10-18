@@ -29,11 +29,14 @@ LENGTH = 10.0
 STEPS = 20
 CHANNELS = 2
 BYTES_PER_CHANNEL = 4 # float32 format used for output stream
-VOLUME = 0.2
+VOLUME = 0.25
 INIT_SEED = 0
 SAMPLE_RATE = 44100
 SAMPLE_SIZE = round(LENGTH * SAMPLE_RATE) # MODEL_CONFIG["sample_size"]
-
+SIGMA_MIN = 0.3
+SIGMA_MAX = 500
+CFG_SCALE = 6.0
+SAMPLER_TYPE = "dpmpp-3m-sde"
 # FLASK ROUTES
 app = flask.Flask(__name__)
 
@@ -43,16 +46,15 @@ def main():
 
 @app.route("/radio")
 def radio():
-    global INIT_SEED
     positive_prompt = request.args.get('positive_prompt', 'piano')
     negative_prompt = request.args.get('negative_prompt', None)
-    length = request.args.get('length', 10.0, type=float)
-    steps = request.args.get('steps', 20, type=int)
-    seed = request.args.get('seed', 0, type=int)
-    sigma_min = request.args.get('sigma_min', 0.3, type=float)
-    sigma_max = request.args.get('sigma_max', 500, type=float)
-    cfg_scale = request.args.get('cfg_scale', 6.0, type=float)
-    sampler_type = request.args.get('sampler_type', "dpmpp-3m-sde")
+    length = request.args.get('length', LENGTH, type=float)
+    steps = request.args.get('steps', STEPS, type=int)
+    seed = request.args.get('seed', INIT_SEED, type=int)
+    sigma_min = request.args.get('sigma_min', SIGMA_MIN, type=float)
+    sigma_max = request.args.get('sigma_max', SIGMA_MAX, type=float)
+    cfg_scale = request.args.get('cfg_scale', CFG_SCALE, type=float)
+    sampler_type = request.args.get('sampler_type', SAMPLER_TYPE)
     generated_audio = run_model(
         positive_prompt=positive_prompt,
         negative_prompt=negative_prompt,
@@ -104,12 +106,12 @@ def run_model(positive_prompt: str,
     positive_conditioning = [{
         "prompt": positive_prompt,
         "seconds_start": 0, 
-        "seconds_total": LENGTH
+        "seconds_total": length
     }]
     negative_conditioning = [{
         "prompt": negative_prompt,
         "seconds_start": 0, 
-        "seconds_total": LENGTH
+        "seconds_total": length
     }] if negative_prompt is not None else None
 
     # Generate stereo audio

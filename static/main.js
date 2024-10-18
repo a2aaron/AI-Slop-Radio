@@ -63,24 +63,38 @@ async function queueIfNeeded() {
 }
 
 /**
+ * Set volume from the volume slider
+ */
+function setVolumeFromSlider() {
+    const new_vol = parseFloat(volume_slider.value) * parseFloat(volume_slider.value);
+    gainNode.gain.value = new_vol;
+    volume_slider_display.innerText = `${(new_vol * 100.0).toFixed(0)}%`;
+}
+
+/**
  * Build the radio URL along with it's parameters using the controls on the page.
  * @returns {URL} The prompt URL
  */
 function getPromptUrl() {
     const radio_url = new URL("/radio", window.location.toString());
-    radio_url.searchParams.set("length", "10.0");
     
-    const seed = seed_input.value;
-    radio_url.searchParams.set("seed", seed);
-    
-    const positive_prompt = positive_prompt_textarea.value;
-    radio_url.searchParams.set("positive_prompt", positive_prompt);
-
+    radio_url.searchParams.set("positive_prompt", positive_prompt_textarea.value);
     const negative_prompt = negative_prompt_textarea.value;
-    const negative_prompt_enable = negative_prompt_enable_checkbox.checked;
-    if (negative_prompt_enable) {
+    if (negative_prompt_enable_checkbox.checked || negative_prompt != "") {
         radio_url.searchParams.set("negative_prompt", negative_prompt);
     }
+    radio_url.searchParams.set("cfg", cfg_input.value);
+    radio_url.searchParams.set("sigma_min", sigma_min_input.value);
+    radio_url.searchParams.set("sigma_max", sigma_max_input.value);
+
+    radio_url.searchParams.set("seed", seed_input.value);
+    radio_url.searchParams.set("steps", steps_input.value);
+    radio_url.searchParams.set("length", length_input.value);
+
+    if (save_to_disk_checkbox.checked) {
+        radio_url.searchParams.set("debug_save", "true");
+    }
+
     return radio_url;
 }
 
@@ -146,14 +160,24 @@ const MAX_BUFFER = 10.0;
 let IS_PLAYING = false;
 let ALREADY_FETCHING = false;
 
-const play_button = getElementTyped("play", HTMLButtonElement);
+
 const positive_prompt_textarea = getElementTyped("positive_prompt", HTMLTextAreaElement);
 const negative_prompt_textarea = getElementTyped("negative_prompt", HTMLTextAreaElement);
 const negative_prompt_enable_checkbox = getElementTyped("negative_prompt_enable", HTMLInputElement);
+
+const cfg_input = getElementTyped("cfg", HTMLInputElement);
+const sigma_min_input = getElementTyped("sigma_min", HTMLInputElement);
+const sigma_max_input = getElementTyped("sigma_max", HTMLInputElement);
+
 const seed_input = getElementTyped("seed", HTMLInputElement);
+const steps_input = getElementTyped("steps", HTMLInputElement);
+const length_input = getElementTyped("length", HTMLInputElement);
+
 const volume_slider = getElementTyped("volume", HTMLInputElement);
 const volume_slider_display = getElementTyped("volume_slider_display", HTMLSpanElement);
 
+const save_to_disk_checkbox = getElementTyped("debug_save", HTMLInputElement);
+const play_button = getElementTyped("play", HTMLButtonElement);
 
 play_button.onclick = async (event) => {
     IS_PLAYING = !IS_PLAYING;
@@ -165,9 +189,8 @@ play_button.onclick = async (event) => {
 };
 
 volume_slider.oninput = (event) => {
-    const new_vol = parseFloat(volume_slider.value) * parseFloat(volume_slider.value);
-    gainNode.gain.value = new_vol;
-    volume_slider_display.innerText = `${(new_vol * 100.0).toFixed(0)}%`;
+    setVolumeFromSlider();
 }
+setVolumeFromSlider();
 
 setInterval(queueIfNeeded, 1000);

@@ -7,7 +7,7 @@
 <body>
     <h1>Open Stable Radio</h1>
     
-    <h2>Controls</h2>
+    <h2>Prompt</h2>
     <div>
         <label for="positive_prompt">Positive Prompt</label>
         <textarea id="positive_prompt" name="positive_prompt">piano</textarea>
@@ -15,16 +15,43 @@
     <div>
         <label for="negative_prompt">Negative Prompt</label>
         <textarea id="negative_prompt" name="negative_prompt"></textarea>
+        <label for="negative_prompt_enable">Always Send Negative Prompt</label>
         <input type="checkbox" id="negative_prompt_enable" name="negative_prompt_enable"></input>
     </div>
+    <div>
+        <label for="cfg">CFG Scale</label>
+        <input type="number" id="cfg" name="cfg" step="0.1" value="6.0"></input>
+    </div>
+    <div>
+        <label for="sigma_min">Sigma Min</label>
+        <input type="number" id="sigma_min" name="sigma_min" value="0.3"></input>
+    </div>
+    <div>
+        <label for="sigma_max">Sigma Max</label>
+        <input type="number" id="sigma_max" name="sigma_max" value="500.0"></input>
+    </div>
+    <h2>Generation Parameters</h2>
     <div>
         <label for="seed">Seed</label>
         <input type="number" id="seed" name="seed" min="0" value="0"></input>
     </div>
     <div>
+        <label for="steps">Steps</label>
+        <input type="number" id="steps" name="steps" min="1" value="20"></input>
+    </div>
+    <div>
+        <label for="length">Length</label>
+        <input type="number" id="length" name="length" min="1" value="10.0"></input>
+    </div>
+    <h2>Sound Controls</h2>
+    <div>
         <label for="volume">Volume</label>
         <input type="range" id="volume" name="volume" min="0" max="1" value="0.5" step="any" />
         <span id="volume_slider_display"></span>
+    </div>
+    <div>
+        <label for="debug_save">Save to Disk?</label>
+        <input type="checkbox" id="debug_save" name="debug_save"></input>
     </div>
     <button id="play">Play</button>
 </body>
