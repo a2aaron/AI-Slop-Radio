@@ -1,7 +1,51 @@
+/**
+ * Constructor type, such as "HTMLElement" 
+ * @template T
+ * @typedef {new (...args: any[]) => T} Constructor
+ */
+
+/**
+ * @template T
+ * @param {string} id 
+ * @param {Constructor<T>} type 
+ * @returns {T}
+ */
+function getElementTyped(id, type) {
+    const element = document.getElementById(id);
+    if (element == null) {
+        throw new Error(`Could not find HTMLElement with id ${id}`);
+    }
+    if (!(element instanceof type)) {
+        throw new Error(`Expected HTMLElement with id ${id} to be of type ${type}. Got ${element.constructor.name}.`)
+    }
+    return element;
+}
+
+/**
+ * Asserts that a variable is not null. If it is null, an error is thrown.
+ * @template T
+ * @param {T | null} x 
+ * @returns {T}
+ */
+function assertNotNull(x) {
+    if (x == null) {
+        throw new Error("Expected input to be non-null.")
+    }
+    return x;
+}
+
+/**
+ * The destination audio node. This is so that I can attach additional things like GainNodes as an effect chain
+ * and have everyone point to the same destination.
+ * @returns {AudioNode} The destination audio node.
+ */
 function getDestinationNode() {
     return gainNode;
 }
 
+/**
+ * Queues up audio as needed. This should be called intermittently
+ */
 async function queueIfNeeded() {
     if (!IS_PLAYING) {
         return;
@@ -10,15 +54,24 @@ async function queueIfNeeded() {
 
     if (!enoughBuffer && !ALREADY_FETCHING) {
         ALREADY_FETCHING = true;
-        await queueFromPrompt();
+        const promptUrl = getPromptUrl();
+        const sourceNode = await getAudioBufferSourceNode(promptUrl);
+        queueAudio(sourceNode);
+        seed_input.value = (parseInt(seed_input.value) + 1).toString();
         ALREADY_FETCHING = false;
     }
 }
 
-async function queueFromPrompt() {
-    const radio_url = new URL("/radio", window.location);
-    radio_url.searchParams.set("length", 10.0);
-    radio_url.searchParams.set("seed", 0);
+/**
+ * Build the radio URL along with it's parameters using the controls on the page.
+ * @returns {URL} The prompt URL
+ */
+function getPromptUrl() {
+    const radio_url = new URL("/radio", window.location.toString());
+    radio_url.searchParams.set("length", "10.0");
+    
+    const seed = seed_input.value;
+    radio_url.searchParams.set("seed", seed);
     
     const positive_prompt = positive_prompt_textarea.value;
     radio_url.searchParams.set("positive_prompt", positive_prompt);
@@ -28,11 +81,13 @@ async function queueFromPrompt() {
     if (negative_prompt_enable) {
         radio_url.searchParams.set("negative_prompt", negative_prompt);
     }
-    sourceNode = await getAudioBufferSourceNode(radio_url);
-    queueAudio(sourceNode);
+    return radio_url;
 }
 
-// The remaining amount of time in the buffer
+/**
+ * The remaining amount of time in the buffer
+ * @returns {number} The amount of time remaining in the buffer. Zero if there is nothing left in the buffer
+ */
 function remainingBufferTime() {
     if (audioCtx.currentTime > LATEST_QUEUED_TIME) {
         return 0.0;
@@ -42,8 +97,11 @@ function remainingBufferTime() {
 
 // The time, in seconds, of the latest queued up buffer.
 let LATEST_QUEUED_TIME = 0.0
-// Gets the latest queued time or the current time, which ever is later.
-// This should be used to achieve gapless queuing of audio.
+/**
+ * Returns the time of the latest queued audio. If there is no latest queued audio, then this is the current time.
+ * This should be used to achieve gapless audio queuing. 
+ * @returns {number} The current time or the latest queued time, whichever is later
+ */
 function getLatestQueuedOrNow() {
     if (audioCtx.currentTime > LATEST_QUEUED_TIME) {
         return audioCtx.currentTime;
@@ -52,16 +110,24 @@ function getLatestQueuedOrNow() {
     }
 }
 
-// Queue up the given source node to play. If the queue is empty, it plays immediately.
+/**
+ * Queue up the given source node to play. If the queue is empty, it plays immediately.
+ * @param {AudioBufferSourceNode} audioBufferSourceNode The node to queue up
+ */
 function queueAudio(audioBufferSourceNode) {
-    const duration = audioBufferSourceNode.buffer.duration;
+    const buffer = assertNotNull(audioBufferSourceNode.buffer);
+    const duration = buffer.duration;
     const queueTime = getLatestQueuedOrNow();
     console.log(`Queuing audio at ${queueTime}. Remaining buffer time: ${remainingBufferTime()}`);
     audioBufferSourceNode.start(queueTime);
     LATEST_QUEUED_TIME = queueTime + duration;
 }
 
-// Create an AudioBufferSourceNode from the given URL.
+/**
+ * Create an AudioBufferSourceNode from the given URL.
+ * @param {URL} url The radio URL endpoint. This is what is fetched from to download the audio. 
+ * @returns {Promise<AudioBufferSourceNode>} An AudioBufferSourceNode containing the generated audio
+ */
 async function getAudioBufferSourceNode(url) {
     const arrayBuffer = await fetch(url).then((res) => res.arrayBuffer());
     const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
@@ -80,12 +146,14 @@ const MAX_BUFFER = 10.0;
 let IS_PLAYING = false;
 let ALREADY_FETCHING = false;
 
-const play_button = document.getElementById("play");
-const positive_prompt_textarea = document.getElementById("positive_prompt");
-const negative_prompt_textarea = document.getElementById("negative_prompt");
-const negative_prompt_enable_checkbox = document.getElementById("negative_prompt_enable");
-const volume_slider = document.getElementById("volume");
-const volume_slider_display = document.getElementById("volume_slider_display");
+const play_button = getElementTyped("play", HTMLButtonElement);
+const positive_prompt_textarea = getElementTyped("positive_prompt", HTMLTextAreaElement);
+const negative_prompt_textarea = getElementTyped("negative_prompt", HTMLTextAreaElement);
+const negative_prompt_enable_checkbox = getElementTyped("negative_prompt_enable", HTMLInputElement);
+const seed_input = getElementTyped("seed", HTMLInputElement);
+const volume_slider = getElementTyped("volume", HTMLInputElement);
+const volume_slider_display = getElementTyped("volume_slider_display", HTMLSpanElement);
+
 
 play_button.onclick = async (event) => {
     IS_PLAYING = !IS_PLAYING;

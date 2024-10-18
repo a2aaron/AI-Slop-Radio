@@ -18,8 +18,12 @@
         <input type="checkbox" id="negative_prompt_enable" name="negative_prompt_enable"></input>
     </div>
     <div>
+        <label for="seed">Seed</label>
+        <input type="number" id="seed" name="seed" min="0" value="0"></input>
+    </div>
+    <div>
         <label for="volume">Volume</label>
-        <input type="range" id="volume" name="volume" min="0" max="1" step="any" />
+        <input type="range" id="volume" name="volume" min="0" max="1" value="0.5" step="any" />
         <span id="volume_slider_display"></span>
     </div>
     <button id="play">Play</button>
