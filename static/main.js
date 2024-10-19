@@ -44,15 +44,35 @@ function getDestinationNode() {
 }
 
 /**
+ * @returns {number} The estimated amount of time, in seconds, that it takes to generate the next batch of audio.
+ */
+function estimatedGenerationTime() {
+    const steps = parseInt(steps_input.value);
+    const length = parseFloat(length_input.value);
+    // at 60 seconds, about 2 iterations per second
+    // at 50 seconds, about 3 iterations per second
+    // at 40 seconds, about 4 iterations per second
+    // at 30 seconds, about 5 iterations per second
+    // at 20 seconds, about 7 iterations per second
+    // at 10 seconds, about 10 iterations per second
+    // see graph: https://www.desmos.com/calculator/hai0oucjod
+    let stepsPerSecond = 10.0 - length / 6.0;
+    stepsPerSecond = Math.min(Math.max(stepsPerSecond, 0.5), 10.0);
+    return (steps / stepsPerSecond);
+}
+
+/**
  * Queues up audio as needed. This should be called intermittently
  */
 async function queueIfNeeded() {
     if (!IS_PLAYING) {
         return;
     }
-    const enoughBuffer = remainingBufferTime() > MAX_BUFFER;
 
+
+    const enoughBuffer = remainingBufferTime() > estimatedGenerationTime() * 1.1 ;
     if (!enoughBuffer && !ALREADY_FETCHING) {
+        console.log("Requesting at remaining buffer: ", remainingBufferTime());
         ALREADY_FETCHING = true;
         const promptUrl = getPromptUrl();
         const sourceNode = await getAudioBufferSourceNode(promptUrl);
@@ -156,7 +176,6 @@ const audioCtx = new window.AudioContext();
 const gainNode = audioCtx.createGain();
 gainNode.connect(audioCtx.destination);
 
-const MAX_BUFFER = 10.0;
 let IS_PLAYING = false;
 let ALREADY_FETCHING = false;
 
@@ -179,6 +198,9 @@ const volume_slider_display = getElementTyped("volume_slider_display", HTMLSpanE
 const save_to_disk_checkbox = getElementTyped("debug_save", HTMLInputElement);
 const play_button = getElementTyped("play", HTMLButtonElement);
 
+const estimated_time_display = getElementTyped("estimated_time_display", HTMLSpanElement)
+const remaining_buffer_display = getElementTyped("remaining_buffer_display", HTMLSpanElement)
+
 play_button.onclick = async (event) => {
     IS_PLAYING = !IS_PLAYING;
     if (IS_PLAYING) {
@@ -191,6 +213,26 @@ play_button.onclick = async (event) => {
 volume_slider.oninput = (event) => {
     setVolumeFromSlider();
 }
+
+steps_input.onchange = (event) => {
+    setEstimatedTimeDisplay();
+}
+
+length_input.onchange = (event) => {
+    setEstimatedTimeDisplay();
+}
+
 setVolumeFromSlider();
+setEstimatedTimeDisplay();
+setRemainingBuffer();
 
 setInterval(queueIfNeeded, 1000);
+
+function setEstimatedTimeDisplay() {
+    estimated_time_display.innerText = estimatedGenerationTime().toFixed(1)
+}
+
+setInterval(setRemainingBuffer, 100);
+function setRemainingBuffer() {
+    remaining_buffer_display.innerText = remainingBufferTime().toFixed(1);
+}
