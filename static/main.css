@@ -1,3 +1,7 @@
+* {
+    box-sizing: border-box;
+}
+
 body {
     max-width: 1000px;
     margin: 0 auto;
@@ -33,9 +37,25 @@ input:invalid {
     gap: 0.5em;
 }
 
-#queue-list > li {
+#queue-list li {
     padding: 1em;
 }
+
+#queue-list:empty::after {
+    content: "playlist is empty!";
+}
+
+[data-queue-state] {
+    transition: height 1s, padding 1s, background-color 1s;
+}
+
+#queue-list [data-queue-state="done"] {
+    background: red;
+    padding: 0;
+    height: 0;
+    overflow: hidden;
+}
+
 
 [data-queue-state="playing"] {
     background: lightgreen;

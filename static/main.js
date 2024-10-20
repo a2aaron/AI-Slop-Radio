@@ -4,6 +4,44 @@ let ALREADY_FETCHING = false;
 /** @type {{ elapsed: number, stepSeconds: number }[]} */
 let RECENT_STEPSECONDS = [];
 let RECENT_STEPSECONDS_INDEX = 0;
+
+
+/**
+ * Place a new item in the visual playlist queue. The item will start in 
+ * the "generating" state.
+ * Returns the list element that was inserted into the queue.
+ * @param {string} text 
+ * @param {number} queuedAt
+ * @param {number} length
+ * @returns {HTMLLIElement} The element that was inserted.
+ */
+function pushQueueItem(text, queuedAt, length) {
+    const item = document.createElement("li");
+    item.innerText = text;
+    item.dataset.queuedAt = queuedAt.toString();
+    item.dataset.length = length.toString();
+    item.dataset.queueState = "generating";
+    queueList.appendChild(item);
+    return item;
+}
+
+function updateQueue() {
+    const items = queueList.querySelectorAll("li");
+
+    for (const item of items) {
+        const queuedAt = parseFloat(item.dataset.queuedAt ?? "");
+        const length = parseFloat(item.dataset.length ?? "");
+
+        const currentTime = audioCtx.currentTime;
+        if (currentTime > queuedAt + length) {
+            item.dataset.queueState = "done";
+            item.ontransitionend = (event) => item.parentElement?.removeChild(item);
+        } else if (currentTime > queuedAt) {
+            item.dataset.queueState = "playing";
+        }
+    }
+}
+
 /**
  * Constructor type, such as "HTMLElement" 
  * @template T
@@ -21,10 +59,7 @@ function getElementTyped(id, type) {
     if (element == null) {
         throw new Error(`Could not find HTMLElement with id ${id}`);
     }
-    if (!(element instanceof type)) {
-        throw new Error(`Expected HTMLElement with id ${id} to be of type ${type}. Got ${element.constructor.name}.`)
-    }
-    return element;
+    return assertType(element, type);
 }
 
 /**
@@ -38,6 +73,19 @@ function assertNotNull(x) {
         throw new Error("Expected input to be non-null.")
     }
     return x;
+}
+
+/**
+ * @template T
+ * @param {any} element 
+ * @param {Constructor<T>} type 
+ * @returns {T}
+ */
+function assertType(element, type) {
+    if (!(element instanceof type)) {
+        throw new Error(`Expected input to be of type ${type}. Got ${element.constructor.name}.`)
+    }
+    return element;
 }
 
 /**
@@ -90,10 +138,17 @@ async function queueIfNeeded() {
         const enoughBuffer = remainingBufferTime() > minimumBuffer;
         if (!enoughBuffer && !ALREADY_FETCHING) {
             ALREADY_FETCHING = true;
+
+            const text = `${settings.positive_prompt} (seed = ${settings.seed})`; 
+            const item = pushQueueItem(text, getLatestQueuedOrNow(), settings.length);
             const promptUrl = getRadioUrl(settings);
             const { node, elapsed } = await getAudioBufferSourceNode(promptUrl);
-            console.log(`Took ${elapsed} seconds to generate audio`);
             queueAudio(node);
+            
+            item.dataset.queueState = "queued";
+            console.log(`Took ${elapsed} seconds to generate audio`);
+            
+            
             recordGenerationStats(settings, elapsed);
             setEstimatedTimeDisplay()
     
@@ -115,15 +170,15 @@ function setVolumeFromSlider() {
 
 /**
  * @typedef {{ 
- *     positive_prompt: string | null;
- *     negative_prompt: string | null;
- *     cfg: number;
- *     sigma_min: number;
- *     sigma_max: number;
- *     seed: number;
- *     steps: number;
- *     length: number;
- *     debug_save: boolean; 
+ *     positive_prompt: string | null,
+ *     negative_prompt: string | null,
+ *     cfg: number,
+ *     sigma_min: number,
+ *     sigma_max: number,
+ *     seed: number,
+ *     steps: number,
+ *     length: number,
+ *     debug_save: boolean, 
  * }} PromptSettings 
  * @returns {PromptSettings | null}
  */
@@ -266,6 +321,8 @@ const play_button = getElementTyped("play", HTMLButtonElement);
 const estimated_time_display = getElementTyped("estimated_time_display", HTMLSpanElement)
 const remaining_buffer_display = getElementTyped("remaining_buffer_display", HTMLSpanElement)
 
+const queueList = getElementTyped("queue-list", HTMLOListElement);
+
 play_button.onclick = async (event) => {
     IS_PLAYING = !IS_PLAYING;
     if (IS_PLAYING) {
@@ -292,6 +349,12 @@ setEstimatedTimeDisplay();
 setRemainingBuffer();
 
 setInterval(queueIfNeeded, 1000);
+setInterval(updateUI, 100);
+
+function updateUI() {
+    setRemainingBuffer();
+    updateQueue();    
+}
 
 function setEstimatedTimeDisplay() {
     const settings = getPromptSettings();
@@ -300,7 +363,6 @@ function setEstimatedTimeDisplay() {
     }
 }
 
-setInterval(setRemainingBuffer, 100);
 function setRemainingBuffer() {
     remaining_buffer_display.innerText = remainingBufferTime().toFixed(1);
 }
@@ -314,10 +376,10 @@ function recordGenerationStats(settings, elapsed) {
         stepSeconds: settings.steps * settings.length,
         elapsed
     };
-    if (RECENT_STEPSECONDS.length < 10) {
+    if (RECENT_STEPSECONDS.length < 5) {
         RECENT_STEPSECONDS.push(item)
     } else {
         RECENT_STEPSECONDS[RECENT_STEPSECONDS_INDEX] = item;
-        RECENT_STEPSECONDS_INDEX = (RECENT_STEPSECONDS_INDEX + 1) % 10;
+        RECENT_STEPSECONDS_INDEX = (RECENT_STEPSECONDS_INDEX + 1) % 5;
     }
 }
