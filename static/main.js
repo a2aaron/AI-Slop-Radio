@@ -127,28 +127,39 @@ function estimatedGenerationTime(steps, length) {
  * Queues up audio as needed. This should be called intermittently
  */
 async function queueIfNeeded() {
-    if (!IS_PLAYING) {
+    if (!IS_PLAYING || ALREADY_FETCHING) {
         return;
     }
 
-
     const settings = getPromptSettings();
     if (settings != null) {
-        const minimumBuffer = estimatedGenerationTime(settings.steps, settings.length) * 1.25 + 2.0;
+        
+        let minimumBuffer = estimatedGenerationTime(settings.steps, settings.length);
+        // Longer generations can vary wildy in generation time. Add some buffer to compensate.
+        if (settings.length >= 30) {
+            minimumBuffer = minimumBuffer * 1.40;
+        } else {
+            minimumBuffer = minimumBuffer * 1.25;
+        }
+        minimumBuffer += 2.0; // Try to maintain at least a two second buffer period
+        
         const enoughBuffer = remainingBufferTime() > minimumBuffer;
-        if (!enoughBuffer && !ALREADY_FETCHING) {
+        if (!enoughBuffer) {
             ALREADY_FETCHING = true;
+            const now = Date.now();
 
-            const text = `${settings.positive_prompt} (seed = ${settings.seed})`; 
+            let text = `${settings.positive_prompt} (seed = ${settings.seed})`; 
+            if (settings.negative_prompt != null) {
+                text = `${settings.positive_prompt} (negative: ${settings.negative_prompt}) [seed = ${settings.seed}]`; 
+            }
             const item = pushQueueItem(text, getLatestQueuedOrNow(), settings.length);
             const promptUrl = getRadioUrl(settings);
-            const { node, elapsed } = await getAudioBufferSourceNode(promptUrl);
+            const node = await getAudioBufferSourceNode(promptUrl);
             queueAudio(node);
             
+            const elapsed = (Date.now() - now) / 1000.0;
             item.dataset.queueState = "queued";
             console.log(`Took ${elapsed} seconds to generate audio`);
-            
-            
             recordGenerationStats(settings, elapsed);
             setEstimatedTimeDisplay()
     
@@ -278,21 +289,16 @@ function queueAudio(audioBufferSourceNode) {
 /**
  * Create an AudioBufferSourceNode from the given URL.
  * @param {URL} url The radio URL endpoint. This is what is fetched from to download the audio. 
- * @returns {Promise<{node: AudioBufferSourceNode, elapsed: number}>} An AudioBufferSourceNode containing the generated audio
+ * @returns {Promise<AudioBufferSourceNode>} An AudioBufferSourceNode containing the generated audio
  */
 async function getAudioBufferSourceNode(url) {
-    const now = Date.now();
     const arrayBuffer = await fetch(url).then((res) => res.arrayBuffer());
     const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
     const node = audioCtx.createBufferSource();
     node.buffer = audioBuffer
 
     node.connect(getDestinationNode());
-    const elapsed = Date.now() - now;
-    return {
-        node,
-        elapsed: elapsed / 1000.0,
-    };
+    return node;
 }
 
 const audioCtx = new window.AudioContext();
