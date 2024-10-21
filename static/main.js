@@ -321,7 +321,6 @@ function setVolumeFromSlider() {
  *     seed: number,
  *     steps: number,
  *     length: number,
- *     debug_save: boolean, 
  * }} PromptSettings 
  * @returns {PromptSettings | null}
  */
@@ -348,7 +347,6 @@ function getPromptSettings() {
         "seed": parseInt(seed_input.value),
         "steps": parseInt(steps_input.value),
         "length": parseFloat(length_input.value),
-        "debug_save": save_to_disk_checkbox.checked,
     }
 }
 
@@ -372,10 +370,6 @@ function getRadioUrl(settings) {
     radio_url.searchParams.set("seed", settings.seed.toString());
     radio_url.searchParams.set("steps", settings.steps.toString());
     radio_url.searchParams.set("length", settings.length.toString());
-
-    if (save_to_disk_checkbox.checked) {
-        radio_url.searchParams.set("debug_save", "true");
-    }
 
     return radio_url;
 }
@@ -452,7 +446,6 @@ const length_input = getElementTyped("length", HTMLInputElement);
 const volume_slider = getElementTyped("volume", HTMLInputElement);
 const volume_slider_display = getElementTyped("volume_slider_display", HTMLSpanElement);
 
-const save_to_disk_checkbox = getElementTyped("debug_save", HTMLInputElement);
 const play_button = getElementTyped("play", HTMLButtonElement);
 
 const estimated_time_display = getElementTyped("estimated_time_display", HTMLSpanElement)

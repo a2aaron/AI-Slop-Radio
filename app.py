@@ -74,9 +74,6 @@ def radio():
     write_to_file(buffer, generated_audio)
     out_bytes = buffer.getvalue()
     
-    if "debug_save" in request.args:
-        write_to_file(f"out_{positive_prompt}_{seed}.wav", generated_audio)
-
     return out_bytes, {"Content-Type": "audio/wav"}    
 
 # GENERATION
