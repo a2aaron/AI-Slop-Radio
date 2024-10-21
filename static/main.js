@@ -5,6 +5,9 @@ let ALREADY_FETCHING = false;
 let RECENT_STEPSECONDS = [];
 let RECENT_STEPSECONDS_INDEX = 0;
 
+/** @type {{ audio: AudioBuffer, settings: PromptSettings }[]} */
+let RECENT_GENERATIONS = [];
+const MAX_RECENT_GENERATIONS = 5;
 
 /**
  * Place a new item in the visual playlist queue. The item will start in 
@@ -148,19 +151,22 @@ async function queueIfNeeded() {
             ALREADY_FETCHING = true;
             const now = Date.now();
 
-            let text = `${settings.positive_prompt} (seed = ${settings.seed})`; 
+            const queueTime = getLatestQueuedOrNow();
+            let promptText = settings.positive_prompt;
             if (settings.negative_prompt != null) {
-                text = `${settings.positive_prompt} (negative: ${settings.negative_prompt}) [seed = ${settings.seed}]`; 
+                promptText = `${settings.positive_prompt} (negative: ${settings.negative_prompt})`
             }
-            const item = pushQueueItem(text, getLatestQueuedOrNow(), settings.length);
+            let text = `${promptText} [seed = ${settings.seed}] @ t = ${queueTime.toFixed(1)} to ${(queueTime + settings.length).toFixed(1)}`; 
+
+            const item = pushQueueItem(text, queueTime, settings.length);
             const promptUrl = getRadioUrl(settings);
-            const node = await getAudioBufferSourceNode(promptUrl);
-            queueAudio(node);
+            const { node, audioBuffer } = await getAudioBufferSourceNode(promptUrl);
+            queueAudio(node, queueTime);
             
             const elapsed = (Date.now() - now) / 1000.0;
             item.dataset.queueState = "queued";
-            console.log(`Took ${elapsed} seconds to generate audio`);
-            recordGenerationStats(settings, elapsed);
+            console.log(`Took ${elapsed} seconds to generate ${audioBuffer.duration}s of audio`);
+            recordGenerationStats(settings.steps, audioBuffer.duration, elapsed);
             setEstimatedTimeDisplay()
     
             seed_input.value = (parseInt(seed_input.value) + 1).toString();
@@ -277,19 +283,18 @@ function getLatestQueuedOrNow() {
 /**
  * Queue up the given source node to play. If the queue is empty, it plays immediately.
  * @param {AudioBufferSourceNode} audioBufferSourceNode The node to queue up
- */
-function queueAudio(audioBufferSourceNode) {
-    const buffer = assertNotNull(audioBufferSourceNode.buffer);
-    const duration = buffer.duration;
-    const queueTime = getLatestQueuedOrNow();
+ * @param {number} queueTime the time, in seconds, for when to queue this audio.
+*/
+function queueAudio(audioBufferSourceNode, queueTime) {
     audioBufferSourceNode.start(queueTime);
-    LATEST_QUEUED_TIME = queueTime + duration;
+    const buffer = assertNotNull(audioBufferSourceNode.buffer);
+    LATEST_QUEUED_TIME = queueTime + buffer.duration;
 }
 
 /**
  * Create an AudioBufferSourceNode from the given URL.
  * @param {URL} url The radio URL endpoint. This is what is fetched from to download the audio. 
- * @returns {Promise<AudioBufferSourceNode>} An AudioBufferSourceNode containing the generated audio
+ * @returns {Promise<{ node: AudioBufferSourceNode, audioBuffer: AudioBuffer }>} An AudioBufferSourceNode containing the generated audio
  */
 async function getAudioBufferSourceNode(url) {
     const arrayBuffer = await fetch(url).then((res) => res.arrayBuffer());
@@ -298,7 +303,7 @@ async function getAudioBufferSourceNode(url) {
     node.buffer = audioBuffer
 
     node.connect(getDestinationNode());
-    return node;
+    return {node, audioBuffer};
 }
 
 const audioCtx = new window.AudioContext();
@@ -374,12 +379,13 @@ function setRemainingBuffer() {
 }
 
 /**
- * @param {PromptSettings} settings 
+ * @param {number} steps
+ * @param {number} length
  * @param {number} elapsed 
  */
-function recordGenerationStats(settings, elapsed) {
+function recordGenerationStats(steps, length, elapsed) {
     const item = {
-        stepSeconds: settings.steps * settings.length,
+        stepSeconds: steps * length,
         elapsed
     };
     if (RECENT_STEPSECONDS.length < 5) {
