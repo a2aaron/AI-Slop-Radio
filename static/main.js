@@ -21,22 +21,34 @@ class PlaylistItem extends HTMLElement {
     /**
      * Initialize the PlaylistItem in the "generating" state.
      * Returns the list element that was inserted into the queue.
-     * @param {string} text 
+     * @param {PromptSettings} promptSettings 
      * @param {number} queuedAt
      * @param {number} length
      */
-    init(text, queuedAt, length) {
+    init(promptSettings, text, queuedAt, length) {
         this.dataset.queueState = "generating";
         this.innerText = text;
         this.queuedAt = queuedAt;
         this.length = length;
+        this.url = null;
+        this.promptSettings = promptSettings;
     }
     /**
      * @param {AudioBuffer} buffer The AudioBuffer of generated audio associated with this PlaylistItem. 
      */
-    setQueued(buffer) {
+    async setQueued(buffer) {
         this.buffer = buffer;
         this.queueState = "queued";
+        
+        this.innerText += " | ";
+
+        this.url = await downloadBuffer(buffer);
+        const downloadLink = document.createElement("a");
+        downloadLink.innerText = "[Download]";
+        downloadLink.onclick = (event) => event.stopPropagation();
+        downloadLink.href = this.url;
+        downloadLink.download = `${this.promptSettings?.positive_prompt} ${this.promptSettings?.seed}`;
+        this.appendChild(downloadLink)
     }
     setPlaying() {
         this.queueState = "playing";
@@ -50,9 +62,8 @@ class PlaylistItem extends HTMLElement {
             // note: ontransitionend fires once for each property that gets transitioned,
             // so we need to filter for the one we actually want.
             // note that the padding properties are actually split into 4 (there is no "padding" property by itself)
-            console.log(`this.ontransitionend fired, property = ${event.propertyName}, state = ${this.queueState}, text = ${this.innerText}`);
             if (event.propertyName == "padding-top" && this.queueState == "expired") {
-                removePlaylistItem(this)
+                removePlaylistItem(this);
             }
         };
     }
@@ -99,14 +110,19 @@ customElements.define("playlist-item", PlaylistItem);
  * Place a new item in the visual playlist queue. The item will start in 
  * the "generating" state.
  * Returns the list element that was inserted into the queue.
- * @param {string} text 
+ * @param {PromptSettings} settings 
  * @param {number} queuedAt
- * @param {number} length
  * @returns {PlaylistItem} The element that was inserted.
  */
-function pushQueueItem(text, queuedAt, length) {
+function pushQueueItem(settings, queuedAt) {
+    let promptText = settings.positive_prompt;
+    if (settings.negative_prompt != null) {
+        promptText = `${settings.positive_prompt} (negative: ${settings.negative_prompt})`
+    }
+    let text = `${promptText} [seed = ${settings.seed}, steps = ${settings.steps}] @ t = ${queuedAt.toFixed(1)} to ${(queuedAt + settings.length).toFixed(1)}`; 
+    
     const item = assertType(document.createElement("playlist-item"), PlaylistItem);
-    item.init(text, queuedAt, length);
+    item.init(settings, text, queuedAt, settings.length);
     queueList.appendChild(item);
     RECENT_GENERATIONS.push(item);
     if (RECENT_GENERATIONS.length > MAX_RECENT_GENERATIONS) {
@@ -120,7 +136,6 @@ function expireOldestItem() {
         .filter(item => item.queueState == "done")
         .sort((a, b) => a.queuedAt - b.queuedAt);
     if (items.length > 0) {
-        console.log(`Expiring ${items[0].innerText}`)
         items[0].setExpired();
     }
 }
@@ -130,9 +145,12 @@ function expireOldestItem() {
  * @param {PlaylistItem} playlistItem the item to remove 
  */
 function removePlaylistItem(playlistItem) {
+    // Revoke the blob URL so that it doesn't stay around forever.
+    if (playlistItem.url != null) {
+        window.URL.revokeObjectURL(playlistItem.url);
+    }
     const index = RECENT_GENERATIONS.indexOf(playlistItem);
     RECENT_GENERATIONS.splice(index, 1)
-    console.log(`${index} removed from RECENT_GENERATIONS (${playlistItem.innerText})`);
     playlistItem.parentElement?.removeChild(playlistItem);
 }
 
@@ -239,7 +257,7 @@ function estimatedGenerationTime(steps, length) {
  * Queues up audio as needed. This should be called intermittently
  */
 async function queueIfNeeded() {
-    if (!IS_PLAYING) {
+    if (!IS_PLAYING || ALREADY_FETCHING) {
         return;
     }
 
@@ -259,23 +277,22 @@ async function queueIfNeeded() {
         if (!enoughBuffer) {
             ALREADY_FETCHING = true;
             const now = Date.now();
-
-            const queueTime = getLatestQueuedOrNow();
-            let promptText = settings.positive_prompt;
-            if (settings.negative_prompt != null) {
-                promptText = `${settings.positive_prompt} (negative: ${settings.negative_prompt})`
-            }
-            let text = `${promptText} [seed = ${settings.seed}, steps = ${settings.steps}] @ t = ${queueTime.toFixed(1)} to ${(queueTime + settings.length).toFixed(1)}`; 
-
-            const item = pushQueueItem(text, queueTime, settings.length);
-            const promptUrl = getRadioUrl(settings);
-            const { node, audioBuffer } = await getAudioBufferSourceNode(promptUrl);
-            queueAudio(node, queueTime);
             
-            const elapsed = (Date.now() - now) / 1000.0;
-            item.setQueued(audioBuffer)
-            // console.log(`Took ${elapsed} seconds to generate ${audioBuffer.duration}s of audio`);
-            recordGenerationStats(settings.steps, audioBuffer.duration, elapsed);
+            const queueTime = getLatestQueuedOrNow();
+            
+            const item = pushQueueItem(settings, queueTime);
+            const promptUrl = getRadioUrl(settings);
+            try {
+                const { node, audioBuffer } = await getAudioBufferSourceNode(promptUrl);
+                queueAudio(node, queueTime);
+                
+                const elapsed = (Date.now() - now) / 1000.0;
+                await item.setQueued(audioBuffer)
+                recordGenerationStats(settings.steps, audioBuffer.duration, elapsed);
+            } catch (error) {
+                item.setExpired();
+                console.error(error);
+            }
             setEstimatedTimeDisplay()
     
             seed_input.value = (parseInt(seed_input.value) + 1).toString();
@@ -440,6 +457,7 @@ const play_button = getElementTyped("play", HTMLButtonElement);
 
 const estimated_time_display = getElementTyped("estimated_time_display", HTMLSpanElement)
 const remaining_buffer_display = getElementTyped("remaining_buffer_display", HTMLSpanElement)
+const current_time_display = getElementTyped("current_time_display", HTMLSpanElement)
 
 const queueList = getElementTyped("playlist", HTMLElement);
 
@@ -468,12 +486,19 @@ setVolumeFromSlider();
 setEstimatedTimeDisplay();
 setRemainingBuffer();
 
-setInterval(queueIfNeeded, 1000);
+setInterval(() => {
+    try {
+        queueIfNeeded();
+    } catch (error) {
+        console.error(error);
+    }
+}, 1000);
 setInterval(updateUI, 100);
 
 function updateUI() {
     setRemainingBuffer();
-    updateQueue();    
+    setCurrentTime();
+    updateQueue();
 }
 
 function setEstimatedTimeDisplay() {
@@ -486,6 +511,11 @@ function setEstimatedTimeDisplay() {
 function setRemainingBuffer() {
     remaining_buffer_display.innerText = remainingBufferTime().toFixed(1);
 }
+
+function setCurrentTime() {
+    current_time_display.innerText = audioCtx.currentTime.toFixed(1);
+}
+
 
 /**
  * @param {number} steps
@@ -504,3 +534,83 @@ function recordGenerationStats(steps, length, elapsed) {
         RECENT_STEPSECONDS_INDEX = (RECENT_STEPSECONDS_INDEX + 1) % 5;
     }
 }
+
+/**
+ * @param {AudioBuffer} buffer 
+ * @returns {Promise<string>} a blob url that can download the blob.
+ */
+async function downloadBuffer(buffer) {
+    let header = getWavHeader(buffer);
+    let body = getWavBody(buffer);
+    let blob = new Blob([header, body], { 'type': 'audio/wav' });
+    let url = window.URL.createObjectURL(blob);
+    return url;
+}
+
+function getWavHeader(buffer) {
+    // adapted from https://gist.github.com/asanoboy/3979747
+    const numChannels = buffer.numberOfChannels;
+    const sampleRate = buffer.sampleRate;
+    const numSamples = buffer.length;
+    const BITS_PER_SAMPLE = 32; // float32
+    const BYTES_PER_SAMPLE = BITS_PER_SAMPLE / 8;
+    const HEADER_SIZE = 23;
+    const TOTAL_BYTES = numSamples * numChannels * BYTES_PER_SAMPLE;
+    const array = new Int16Array(HEADER_SIZE);
+    array[0] = 0x4952; // "RI"
+    array[1] = 0x4646; // "FF"
+
+    array[2] = (TOTAL_BYTES + 15) & 0x0000ffff; // RIFF size
+    array[3] = ((TOTAL_BYTES + 15) & 0xffff0000) >> 16; // RIFF size
+
+    array[4] = 0x4157; // "WA"
+    array[5] = 0x4556; // "VE"
+
+    array[6] = 0x6d66; // "fm"
+    array[7] = 0x2074; // "t "
+
+    array[8] = 0x0012; // fmt chunksize: 18
+    array[9] = 0x0000; //
+
+    array[10] = 0x0003; // format tag : 3 (float32)
+    array[11] = numChannels; // channels: 2
+
+    array[12] = sampleRate & 0x0000ffff; // sample per sec
+    array[13] = (sampleRate & 0xffff0000) >> 16; // sample per sec
+
+    array[14] = (BYTES_PER_SAMPLE * numChannels * sampleRate) & 0x0000ffff; // byte per sec
+    array[15] = ((BYTES_PER_SAMPLE * numChannels * sampleRate) & 0xffff0000) >> 16; // byte per sec
+
+    array[16] = numChannels * BYTES_PER_SAMPLE; // block align
+    array[17] = BITS_PER_SAMPLE; // bits per sample (32 bits for float)
+    array[18] = 0x0000; // cb size
+    array[19] = 0x6164; // "da"
+    array[20] = 0x6174; // "ta"
+    array[21] = (TOTAL_BYTES) & 0x0000ffff; // data size[byte]
+    array[22] = ((TOTAL_BYTES) & 0xffff0000) >> 16; // data size[byte] 
+    return array;
+}
+
+/**
+ * 
+ * @param {AudioBuffer} buffer
+ * @returns {Float32Array}
+ */
+function getWavBody(buffer) {
+    // adapted from https://gist.github.com/asanoboy/3979747
+    const numChannels = buffer.numberOfChannels;
+    const numSamples = buffer.length;
+
+    const array = new Float32Array(numSamples * numChannels);
+
+    for (let channel_i = 0; channel_i < numChannels; channel_i++) {
+        const channel = buffer.getChannelData(channel_i);
+        for (let sample_i = 0; sample_i < channel.length; sample_i++) {
+            const sample = channel[sample_i];
+            array[channel_i + sample_i * numChannels] = sample; 
+        }
+    }
+
+    return array
+}
+
