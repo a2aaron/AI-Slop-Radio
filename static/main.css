@@ -28,7 +28,7 @@ input:invalid {
     border: 1px dashed red;
 }
 
-#queue-list {
+#playlist {
     list-style: none;
     margin: 0;
     padding: 0.5em;
@@ -37,25 +37,29 @@ input:invalid {
     gap: 0.5em;
 }
 
-#queue-list li {
+#playlist playlist-item {
     padding: 1em;
 }
 
-#queue-list:empty::after {
+#playlist:empty::after {
     content: "playlist is empty!";
 }
 
 [data-queue-state] {
-    transition: height 1s, padding 1s, background-color 1s;
+    transition: padding 1s, background-color 1s;
 }
 
-#queue-list [data-queue-state="done"] {
-    background: red;
+
+#playlist [data-queue-state="expired"] {
+    background: lightslategray;
     padding: 0;
     height: 0;
     overflow: hidden;
 }
 
+[data-queue-state="done"] {
+    background: red;
+}
 
 [data-queue-state="playing"] {
     background: lightgreen;

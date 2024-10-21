@@ -5,9 +5,95 @@ let ALREADY_FETCHING = false;
 let RECENT_STEPSECONDS = [];
 let RECENT_STEPSECONDS_INDEX = 0;
 
-/** @type {{ audio: AudioBuffer, settings: PromptSettings }[]} */
+/** @type {PlaylistItem[]} */
 let RECENT_GENERATIONS = [];
 const MAX_RECENT_GENERATIONS = 5;
+
+/**
+ * @typedef {"generating" | "queued" | "playing" | "done" | "expired"} PlaylistItemState
+ */
+
+class PlaylistItem extends HTMLElement {
+    constructor() {
+        super();
+        this.buffer = null;
+    }
+    /**
+     * Initialize the PlaylistItem in the "generating" state.
+     * Returns the list element that was inserted into the queue.
+     * @param {string} text 
+     * @param {number} queuedAt
+     * @param {number} length
+     */
+    init(text, queuedAt, length) {
+        this.dataset.queueState = "generating";
+        this.innerText = text;
+        this.queuedAt = queuedAt;
+        this.length = length;
+    }
+    /**
+     * @param {AudioBuffer} buffer The AudioBuffer of generated audio associated with this PlaylistItem. 
+     */
+    setQueued(buffer) {
+        this.buffer = buffer;
+        this.queueState = "queued";
+    }
+    setPlaying() {
+        this.queueState = "playing";
+    }
+    setDone() {
+        this.queueState = "done";
+    }
+    setExpired() {
+        this.queueState = "expired";
+        this.ontransitionend = (event) => {
+            // note: ontransitionend fires once for each property that gets transitioned,
+            // so we need to filter for the one we actually want.
+            // note that the padding properties are actually split into 4 (there is no "padding" property by itself)
+            console.log(`this.ontransitionend fired, property = ${event.propertyName}, state = ${this.queueState}, text = ${this.innerText}`);
+            if (event.propertyName == "padding-top" && this.queueState == "expired") {
+                removePlaylistItem(this)
+            }
+        };
+    }
+    get queuedAt() {
+        if (this.dataset.queuedAt == undefined) {
+            throw new Error("Expected queuedAt to be set. Got undefined");
+        }
+        return parseFloat(this.dataset.queuedAt);
+    }
+    set queuedAt(queuedAt) {
+        this.dataset.queuedAt = queuedAt.toString();
+    }
+    get length() {
+        if (this.dataset.length == undefined) {
+            throw new Error("Expected length to be set. Got undefined");
+        }
+        return parseFloat(this.dataset.length);
+    }
+    set length(length) {
+        this.dataset.length = length.toString();
+    }
+
+    /**
+     * @returns {PlaylistItemState}
+     */
+    get queueState() {
+        const state = this.dataset.queueState;
+        const valid = state == "generating" || state == "queued" || state == "playing" || state == "done" || state == "expired";
+        if (!valid) {
+            throw new Error(`invalid state: ${state}`);
+        }
+        return state;
+    }
+
+    set queueState(state) {
+        this.dataset.queueState = state;
+    }
+}
+
+customElements.define("playlist-item", PlaylistItem);
+  
 
 /**
  * Place a new item in the visual playlist queue. The item will start in 
@@ -16,31 +102,54 @@ const MAX_RECENT_GENERATIONS = 5;
  * @param {string} text 
  * @param {number} queuedAt
  * @param {number} length
- * @returns {HTMLLIElement} The element that was inserted.
+ * @returns {PlaylistItem} The element that was inserted.
  */
 function pushQueueItem(text, queuedAt, length) {
-    const item = document.createElement("li");
-    item.innerText = text;
-    item.dataset.queuedAt = queuedAt.toString();
-    item.dataset.length = length.toString();
-    item.dataset.queueState = "generating";
+    const item = assertType(document.createElement("playlist-item"), PlaylistItem);
+    item.init(text, queuedAt, length);
     queueList.appendChild(item);
+    RECENT_GENERATIONS.push(item);
+    if (RECENT_GENERATIONS.length > MAX_RECENT_GENERATIONS) {
+        expireOldestItem()
+    }
+
     return item;
+}
+function expireOldestItem() {
+    const items = RECENT_GENERATIONS
+        .filter(item => item.queueState == "done")
+        .sort((a, b) => a.queuedAt - b.queuedAt);
+    if (items.length > 0) {
+        console.log(`Expiring ${items[0].innerText}`)
+        items[0].setExpired();
+    }
+}
+
+/**
+ * Remove an existing item in the visual playlist queue.
+ * @param {PlaylistItem} playlistItem the item to remove 
+ */
+function removePlaylistItem(playlistItem) {
+    const index = RECENT_GENERATIONS.indexOf(playlistItem);
+    RECENT_GENERATIONS.splice(index, 1)
+    console.log(`${index} removed from RECENT_GENERATIONS (${playlistItem.innerText})`);
+    playlistItem.parentElement?.removeChild(playlistItem);
 }
 
 function updateQueue() {
-    const items = queueList.querySelectorAll("li");
+    const items = queueList.querySelectorAll("playlist-item");
 
-    for (const item of items) {
-        const queuedAt = parseFloat(item.dataset.queuedAt ?? "");
-        const length = parseFloat(item.dataset.length ?? "");
+    for (const theItem of items) {
+        const item = assertType(theItem, PlaylistItem);
+
+        const queuedAt = item.queuedAt;
+        const length = item.length;
 
         const currentTime = audioCtx.currentTime;
-        if (currentTime > queuedAt + length) {
-            item.dataset.queueState = "done";
-            item.ontransitionend = (event) => item.parentElement?.removeChild(item);
-        } else if (currentTime > queuedAt) {
-            item.dataset.queueState = "playing";
+        if (currentTime > queuedAt + length && item.queueState == "playing") {
+            item.setDone();
+        } else if (currentTime > queuedAt && item.queueState == "queued") {
+            item.setPlaying();
         }
     }
 }
@@ -130,7 +239,7 @@ function estimatedGenerationTime(steps, length) {
  * Queues up audio as needed. This should be called intermittently
  */
 async function queueIfNeeded() {
-    if (!IS_PLAYING || ALREADY_FETCHING) {
+    if (!IS_PLAYING) {
         return;
     }
 
@@ -156,7 +265,7 @@ async function queueIfNeeded() {
             if (settings.negative_prompt != null) {
                 promptText = `${settings.positive_prompt} (negative: ${settings.negative_prompt})`
             }
-            let text = `${promptText} [seed = ${settings.seed}] @ t = ${queueTime.toFixed(1)} to ${(queueTime + settings.length).toFixed(1)}`; 
+            let text = `${promptText} [seed = ${settings.seed}, steps = ${settings.steps}] @ t = ${queueTime.toFixed(1)} to ${(queueTime + settings.length).toFixed(1)}`; 
 
             const item = pushQueueItem(text, queueTime, settings.length);
             const promptUrl = getRadioUrl(settings);
@@ -164,8 +273,8 @@ async function queueIfNeeded() {
             queueAudio(node, queueTime);
             
             const elapsed = (Date.now() - now) / 1000.0;
-            item.dataset.queueState = "queued";
-            console.log(`Took ${elapsed} seconds to generate ${audioBuffer.duration}s of audio`);
+            item.setQueued(audioBuffer)
+            // console.log(`Took ${elapsed} seconds to generate ${audioBuffer.duration}s of audio`);
             recordGenerationStats(settings.steps, audioBuffer.duration, elapsed);
             setEstimatedTimeDisplay()
     
@@ -332,7 +441,7 @@ const play_button = getElementTyped("play", HTMLButtonElement);
 const estimated_time_display = getElementTyped("estimated_time_display", HTMLSpanElement)
 const remaining_buffer_display = getElementTyped("remaining_buffer_display", HTMLSpanElement)
 
-const queueList = getElementTyped("queue-list", HTMLOListElement);
+const queueList = getElementTyped("playlist", HTMLElement);
 
 play_button.onclick = async (event) => {
     IS_PLAYING = !IS_PLAYING;
