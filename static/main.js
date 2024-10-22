@@ -42,8 +42,10 @@ async function queueIfNeeded() {
                 console.error(error);
             }
             setEstimatedTimeDisplay()
-    
-            seed_input.value = (parseInt(seed_input.value) + 1).toString();
+            
+            if (increment_seed_checkbox.checked) {
+                seed_input.value = (parseInt(seed_input.value) + 1).toString();
+            }
             ALREADY_FETCHING = false;
         }
     }
@@ -594,6 +596,8 @@ const sigma_min_input = getElementTyped("sigma_min", HTMLInputElement);
 const sigma_max_input = getElementTyped("sigma_max", HTMLInputElement);
 
 const seed_input = getElementTyped("seed", HTMLInputElement);
+const increment_seed_checkbox = getElementTyped("seed_increment", HTMLInputElement);
+
 const steps_input = getElementTyped("steps", HTMLInputElement);
 const length_input = getElementTyped("length", HTMLInputElement);
 
