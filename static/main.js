@@ -5,13 +5,12 @@
  * Queues up audio as needed. This should be called intermittently
  */
 async function queueIfNeeded() {
-    if (!IS_PLAYING || ALREADY_FETCHING) {
+    if (!IS_PLAYING) {
         return;
     }
 
     const settings = getPromptSettings();
     if (settings != null) {
-        
         let minimumBuffer = estimatedGenerationTime(settings.steps, settings.length);
         // Longer generations can vary wildy in generation time. Add some buffer to compensate.
         if (settings.length >= 30) {
@@ -23,33 +22,29 @@ async function queueIfNeeded() {
         
         const enoughBuffer = remainingBufferTime() > minimumBuffer;
         if (!enoughBuffer) {
-            ALREADY_FETCHING = true;
             const now = Date.now();
             
-            const queueTime = getLatestQueuedOrNow();
-            
-            const item = pushQueueItem(settings, queueTime);
+            if (increment_seed_checkbox.checked) {
+                seed_input.value = (parseInt(seed_input.value) + 1).toString();
+            }
             const promptUrl = getRadioUrl(settings);
+            const queueTime = getLatestQueuedOrNow();
+            const item = pushQueueItem(settings, queueTime);
+            LATEST_QUEUED_TIME = queueTime + getPreciseDuration(settings.length);                
             try {
                 const { node, audioBuffer } = await getAudioBufferSourceNode(promptUrl);
-                queueAudio(node, queueTime);
-                
-                const elapsed = (Date.now() - now) / 1000.0;
+                node.start(queueTime);
                 await item.setQueued(audioBuffer)
+                console.log(getPreciseDuration(settings.length), audioBuffer.duration);
+                const elapsed = (Date.now() - now) / 1000.0;
                 recordGenerationStats(settings.steps, audioBuffer.duration, elapsed);
             } catch (error) {
                 item.setExpired();
                 console.error(error);
             }
             setEstimatedTimeDisplay()
-            
-            if (increment_seed_checkbox.checked) {
-                seed_input.value = (parseInt(seed_input.value) + 1).toString();
-            }
-            ALREADY_FETCHING = false;
         }
     }
-
 }
 
 /**
@@ -161,17 +156,6 @@ async function getAudioBufferSourceNode(url) {
 }
 
 /**
-* Queue up the given source node to play. If the queue is empty, it plays immediately.
-* @param {AudioBufferSourceNode} audioBufferSourceNode The node to queue up
-* @param {number} queueTime the time, in seconds, for when to queue this audio.
-*/
-function queueAudio(audioBufferSourceNode, queueTime) {
-   audioBufferSourceNode.start(queueTime);
-   const buffer = assertNotNull(audioBufferSourceNode.buffer);
-   LATEST_QUEUED_TIME = queueTime + buffer.duration;
-}
-
-/**
 * The remaining amount of time in the buffer
 * @returns {number} The amount of time remaining in the buffer. Zero if there is nothing left in the buffer
 */
@@ -195,6 +179,21 @@ function getLatestQueuedOrNow() {
    }
 }
 
+/**
+ * Returns the exact number of seconds that a generation of the given length would actually produce.
+ * Generated audio not the same as the requested audio length because the latent vectors decode to blocks of 
+ * 2048 samples. Hence, the audio length is always a multiple of 2048 samples.
+ * @param {number} duration
+ * @returns {number} 
+ */
+function getPreciseDuration(duration) {
+    const MODEL_SAMPLE_RATE = 44100;
+    const LATENT_BLOCK_SIZE = 2048;
+    const numBlocks = Math.floor(duration * MODEL_SAMPLE_RATE / LATENT_BLOCK_SIZE) 
+    const numSamples = numBlocks * LATENT_BLOCK_SIZE;
+    const exactDuration = numSamples / MODEL_SAMPLE_RATE;
+    return exactDuration;
+}
 
 // ##################
 // # PLAYLIST QUEUE #
@@ -567,7 +566,6 @@ function getDestinationNode() {
 // # MAIN #
 // ########
 let IS_PLAYING = false;
-let ALREADY_FETCHING = false;
 
 // The time, in seconds, of the latest queued up buffer.
 let LATEST_QUEUED_TIME = 0.0
