@@ -12,10 +12,6 @@ main {
     grid-template-columns: 350px 1fr;
 }
 
-section {
-/*     border: 1px solid lightgray; */
-}
-
 h2 {
     margin-top: 0;
 }
@@ -46,19 +42,22 @@ input:invalid {
 }
 
 [data-queue-state] {
-    transition: padding 1s, background-color 1s;
+    transition: 1s;
 }
 
 
 #playlist [data-queue-state="expired"] {
-    background: lightslategray;
-    padding: 0;
-    height: 0;
-    overflow: hidden;
+    background: dimgray;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-top: -0.5em;
+    max-height: 0;
+    overflow: clip;
 }
 
 [data-queue-state="done"] {
-    background: red;
+    background: tomato;
+    max-height: 3.5em;
 }
 
 [data-queue-state="playing"] {
@@ -70,5 +69,5 @@ input:invalid {
 }
 
 [data-queue-state="generating"] {
-    background: yellow;
+    background: khaki;
 }

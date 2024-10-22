@@ -250,7 +250,7 @@ class PlaylistItem extends HTMLElement {
             // (in this case, like 5 times due to padding getting transitioned)
             // so we need to filter for the one we actually want.
             // note that the padding properties are actually split into 4 (there is no "padding" property by itself)
-            if (event.propertyName == "padding-top" && this.queueState == "expired") {
+            if (event.propertyName == "background-color" && this.queueState == "expired") {
                 removePlaylistItem(this);
             }
         };
