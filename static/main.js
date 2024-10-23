@@ -5,7 +5,7 @@
  * Queues up audio as needed. This should be called intermittently
  */
 async function queueIfNeeded() {
-    if (!IS_PLAYING) {
+    if (!IS_PLAYING || INFLIGHT_GENERATIONS > 0) {
         return;
     }
 
@@ -22,27 +22,35 @@ async function queueIfNeeded() {
         
         const enoughBuffer = remainingBufferTime() > minimumBuffer;
         if (!enoughBuffer) {
+            INFLIGHT_GENERATIONS += 1;
             const now = Date.now();
             
+            const item = pushQueueItem(settings);
             if (increment_seed_checkbox.checked) {
                 seed_input.value = (parseInt(seed_input.value) + 1).toString();
             }
-            const promptUrl = getRadioUrl(settings);
-            const queueTime = getLatestQueuedOrNow();
-            const item = pushQueueItem(settings, queueTime);
-            LATEST_QUEUED_TIME = queueTime + getPreciseDuration(settings.length);                
             try {
+                // Generate audio
+                const promptUrl = getRadioUrl(settings);
                 const { node, audioBuffer } = await getAudioBufferSourceNode(promptUrl);
+                
+                // Queue audio node
+                const queueTime = getLatestQueuedOrNow();
+                LATEST_QUEUED_TIME = queueTime + getPreciseDuration(settings.length);                
                 node.start(queueTime);
-                await item.setQueued(audioBuffer)
-                console.log(getPreciseDuration(settings.length), audioBuffer.duration);
+                
+                // Update playlist 
+                await item.setQueued(audioBuffer, queueTime);
+                
+                // Update stats
                 const elapsed = (Date.now() - now) / 1000.0;
                 recordGenerationStats(settings.steps, audioBuffer.duration, elapsed);
+                setEstimatedTimeDisplay()
             } catch (error) {
                 item.setExpired();
                 console.error(error);
             }
-            setEstimatedTimeDisplay()
+            INFLIGHT_GENERATIONS -= 1;
         }
     }
 }
@@ -205,37 +213,35 @@ class PlaylistItem extends HTMLElement {
     constructor() {
         super();
         this.buffer = null;
+        this.queueTime = null;
     }
     /**
      * Initialize the PlaylistItem in the "generating" state.
      * Returns the list element that was inserted into the queue.
      * @param {PromptSettings} promptSettings 
-     * @param {number} queuedAt
-     * @param {number} length
      */
-    init(promptSettings, text, queuedAt, length) {
+    init(promptSettings) {
         this.dataset.queueState = "generating";
-        this.innerText = text;
-        this.queuedAt = queuedAt;
-        this.length = length;
-        this.url = null;
         this.promptSettings = promptSettings;
+        this.innerText = this.text;
+        this.url = null;
     }
     /**
+     * @param {number} queueTime the actual time the audio was set to be queued up
      * @param {AudioBuffer} buffer The AudioBuffer of generated audio associated with this PlaylistItem. 
      */
-    async setQueued(buffer) {
+    async setQueued(buffer, queueTime) {
         this.buffer = buffer;
+        this.queueTime = queueTime;
         this.queueState = "queued";
-        
-        this.innerText += " | ";
+        this.innerText = this.text + " | ";
 
         this.url = await getWavDownloadUrl(buffer);
         const downloadLink = document.createElement("a");
         downloadLink.innerText = "[Download]";
         downloadLink.onclick = (event) => event.stopPropagation();
         downloadLink.href = this.url;
-        downloadLink.download = `${this.promptSettings?.positive_prompt} ${this.promptSettings?.seed}`;
+        downloadLink.download = `${this.promptSettings?.positive_prompt?.replace(".", ",")} ${this.promptSettings?.seed}`;
         this.appendChild(downloadLink)
     }
     setPlaying() {
@@ -256,24 +262,6 @@ class PlaylistItem extends HTMLElement {
             }
         };
     }
-    get queuedAt() {
-        if (this.dataset.queuedAt == undefined) {
-            throw new Error("Expected queuedAt to be set. Got undefined");
-        }
-        return parseFloat(this.dataset.queuedAt);
-    }
-    set queuedAt(queuedAt) {
-        this.dataset.queuedAt = queuedAt.toString();
-    }
-    get length() {
-        if (this.dataset.length == undefined) {
-            throw new Error("Expected length to be set. Got undefined");
-        }
-        return parseFloat(this.dataset.length);
-    }
-    set length(length) {
-        this.dataset.length = length.toString();
-    }
 
     /**
      * @returns {PlaylistItemState}
@@ -290,6 +278,23 @@ class PlaylistItem extends HTMLElement {
     set queueState(state) {
         this.dataset.queueState = state;
     }
+
+    get text() {
+        if (this.promptSettings == undefined) {
+            return "";
+        }
+        let promptText = this.promptSettings.positive_prompt;
+        if (this.promptSettings.negative_prompt != null) {
+            promptText = `${this.promptSettings.positive_prompt} (negative: ${this.promptSettings.negative_prompt})`
+        }
+        let text = `${promptText} [seed = ${this.promptSettings.seed}, steps = ${this.promptSettings.steps}]`;
+        if (this.queueTime != undefined) {
+            const startTime = this.queueTime.toFixed(1);
+            const endTime = (this.queueTime + this.promptSettings.length).toFixed(1);
+            text += ` @ t = ${startTime} to ${endTime}`; 
+        }
+        return text;    
+    }
 }
   
 
@@ -298,18 +303,11 @@ class PlaylistItem extends HTMLElement {
  * the "generating" state.
  * Returns the list element that was inserted into the queue.
  * @param {PromptSettings} settings 
- * @param {number} queuedAt
  * @returns {PlaylistItem} The element that was inserted.
  */
-function pushQueueItem(settings, queuedAt) {
-    let promptText = settings.positive_prompt;
-    if (settings.negative_prompt != null) {
-        promptText = `${settings.positive_prompt} (negative: ${settings.negative_prompt})`
-    }
-    let text = `${promptText} [seed = ${settings.seed}, steps = ${settings.steps}] @ t = ${queuedAt.toFixed(1)} to ${(queuedAt + settings.length).toFixed(1)}`; 
-    
+function pushQueueItem(settings) {
     const item = assertType(document.createElement("playlist-item"), PlaylistItem);
-    item.init(settings, text, queuedAt, settings.length);
+    item.init(settings);
     queueList.appendChild(item);
     RECENT_GENERATIONS.push(item);
     if (RECENT_GENERATIONS.length > MAX_RECENT_GENERATIONS) {
@@ -321,7 +319,7 @@ function pushQueueItem(settings, queuedAt) {
 function expireOldestItem() {
     const items = RECENT_GENERATIONS
         .filter(item => item.queueState == "done")
-        .sort((a, b) => a.queuedAt - b.queuedAt);
+        .sort((a, b) => assertExists(a.queueTime) - assertExists(b.queueTime));
     if (items.length > 0) {
         items[0].setExpired();
     }
@@ -347,14 +345,16 @@ function updateQueue() {
     for (const theItem of items) {
         const item = assertType(theItem, PlaylistItem);
 
-        const queuedAt = item.queuedAt;
-        const length = item.length;
-
-        const currentTime = audioCtx.currentTime;
-        if (currentTime > queuedAt + length && item.queueState == "playing") {
-            item.setDone();
-        } else if (currentTime > queuedAt && item.queueState == "queued") {
-            item.setPlaying();
+        if (item.queueState == "queued" || item.queueState == "playing") {
+            const queueTime = assertExists(item.queueTime);
+            const length = assertExists(item.promptSettings).length;
+    
+            const currentTime = audioCtx.currentTime;
+            if (currentTime > queueTime + length && item.queueState == "playing") {
+                item.setDone();
+            } else if (currentTime > queueTime && item.queueState == "queued") {
+                item.setPlaying();
+            }
         }
     }
 }
@@ -527,14 +527,17 @@ function getElementTyped(id, type) {
 }
 
 /**
- * Asserts that a variable is not null. If it is null, an error is thrown.
+ * Asserts that a variable is not null and not undefined. If it is null or undefined, an error is thrown.
  * @template T
- * @param {T | null} x 
+ * @param {T | null | undefined} x 
  * @returns {T}
  */
-function assertNotNull(x) {
-    if (x == null) {
-        throw new Error("Expected input to be non-null.")
+function assertExists(x) {
+    if (x === null) {
+        throw new Error("Expected input to be non-null.");
+    }
+    if (x === undefined) {
+        throw new Error("Expected input to be not undefined.");
     }
     return x;
 }
@@ -566,6 +569,7 @@ function getDestinationNode() {
 // # MAIN #
 // ########
 let IS_PLAYING = false;
+let INFLIGHT_GENERATIONS = 0;
 
 // The time, in seconds, of the latest queued up buffer.
 let LATEST_QUEUED_TIME = 0.0
