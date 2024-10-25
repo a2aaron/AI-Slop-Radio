@@ -57,6 +57,37 @@
                 </ui-control>
             </section>
             <section>
+                <h2>Outpainting and Variation</h2>
+                <ui-control>
+                    <label for="init_audio_checkbox">Enable init audio</label>
+                    <input type="checkbox" id="init_audio_checkbox" name="init_audio_checkbox"></input>
+                </ui-control>
+                <ui-control>
+                    <label for="init_audio">Init Audio</label>
+                    <input type="file" id="init_audio" name="init_audio"></input>
+                </ui-control>
+                <ui-control>
+                    <label for="init_noise_level">Init Noise Level</label>
+                    <input type="number" id="init_noise_level" name="init_noise_level" value="1.0" step="any"></input>
+                </ui-control>
+                <ui-control>
+                    <label for="mask_arg_checkbox">Enable mask args</label>
+                    <input type="checkbox" id="seed_increment" name="seed_increment"></input>
+                </ui-control>
+                <ui-control>
+                    <label for="paste_from">Paste From</label>
+                    <input type="number" id="paste_from" name="paste_from" min="0.0" max="100.0" step="any"></input>
+                </ui-control>
+                <ui-control>
+                    <label for="paste_to">Paste To</label>
+                    <input type="number" id="paste_to" name="paste_to" min="0.0" max="100.0" step="any"></input>
+                </ui-control>
+                <ui-control>
+                    <label for="crop_from">Crop From</label>
+                    <input type="number" id="crop_from" name="crop_from" min="0.0" max="100.0" step="any"></input>
+                </ui-control>
+            </section>
+            <section>
                 <h2>Sound Controls</h2>
                 <ui-control>
                     <label for="volume">Volume</label>

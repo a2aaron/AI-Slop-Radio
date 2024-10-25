@@ -3,7 +3,7 @@ import flask
 from flask import request
 
 import io
-from typing import Any, BinaryIO, Literal, Union
+from typing import Any, BinaryIO, Literal, TypedDict, Union
 
 import json
 import torch
@@ -20,7 +20,10 @@ DeviceStr = Literal["cuda", "cpu"]
 ConditioningDict = dict
 Model = Any
 AudioTensor = torch.Tensor
-
+class MaskArgs(TypedDict):
+    pastefrom: float
+    pasteto: float
+    cropfrom: float
 # CONSTANTS
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MODEL_CONFIG_PATH = "C:/Users/a2aar/dev/Python/realtime-neuralnets/stable_audio_open_1.0_config.json"
@@ -36,6 +39,7 @@ SAMPLE_SIZE = round(LENGTH * SAMPLE_RATE) # MODEL_CONFIG["sample_size"]
 SIGMA_MIN = 0.3
 SIGMA_MAX = 500
 CFG_SCALE = 6.0
+INIT_NOISE_LEVEL = 1.0
 SAMPLER_TYPE = "dpmpp-3m-sde"
 # FLASK ROUTES
 app = flask.Flask(__name__)
@@ -44,17 +48,29 @@ app = flask.Flask(__name__)
 def main():
     return flask.render_template("main.html")
 
-@app.route("/radio")
+@app.route("/radio", methods=["POST"])
 def radio():
-    positive_prompt = request.args.get('positive_prompt', 'piano')
-    negative_prompt = request.args.get('negative_prompt', None)
-    length = request.args.get('length', LENGTH, type=float)
-    steps = request.args.get('steps', STEPS, type=int)
-    seed = request.args.get('seed', INIT_SEED, type=int)
-    sigma_min = request.args.get('sigma_min', SIGMA_MIN, type=float)
-    sigma_max = request.args.get('sigma_max', SIGMA_MAX, type=float)
-    cfg_scale = request.args.get('cfg_scale', CFG_SCALE, type=float)
-    sampler_type = request.args.get('sampler_type', SAMPLER_TYPE)
+    positive_prompt = request.form.get('positive_prompt', 'piano')
+    negative_prompt = request.form.get('negative_prompt', None)
+    length = request.form.get('length', LENGTH, type=float)
+    steps = request.form.get('steps', STEPS, type=int)
+    seed = request.form.get('seed', INIT_SEED, type=int)
+    sigma_min = request.form.get('sigma_min', SIGMA_MIN, type=float)
+    sigma_max = request.form.get('sigma_max', SIGMA_MAX, type=float)
+    cfg_scale = request.form.get('cfg_scale', CFG_SCALE, type=float)
+    sampler_type = request.form.get('sampler_type', SAMPLER_TYPE)
+
+    mask_args: MaskArgs | None = None
+    if ('paste_from' in request.form and 'paste_to' in request.form and 'crop_from' in request.form):
+        mask_args = {
+            'pastefrom': request.form.get('paste_from', type=float), 
+            'pasteto': request.form.get('paste_to', type=float),
+            'cropfrom': request.form.get('crop_from', type=float),
+        }
+
+    
+    init_audio = try_get_init_audio(request)
+
     generated_audio = run_model(
         positive_prompt=positive_prompt,
         negative_prompt=negative_prompt,
@@ -64,10 +80,12 @@ def radio():
         sigma_min=sigma_min,
         sigma_max=sigma_max,
         cfg_scale=cfg_scale,
-        sampler_type=sampler_type
+        sampler_type=sampler_type,
+        mask_args=mask_args,
+        init_audio_args=init_audio,
     )
     
-    volume = request.args.get('volume', VOLUME, type=float)
+    volume = request.form.get('volume', VOLUME, type=float)
     generated_audio = generated_audio * volume
 
     buffer = io.BytesIO()
@@ -75,6 +93,19 @@ def radio():
     out_bytes = buffer.getvalue()
     
     return out_bytes, {"Content-Type": "audio/wav"}    
+
+def try_get_init_audio(request: flask.Request) -> tuple[AudioTensor, int, float] | None:
+    if 'init_audio' not in request.files:
+        return None
+    print("init_audio included!")
+    file = request.files['init_audio']
+    try:
+        (audio, sample_rate) = torchaudio.load(file.stream)
+        init_noise_level = request.form.get('init_noise_level', INIT_NOISE_LEVEL, type=float)
+        return audio, sample_rate, init_noise_level
+    except Exception as err:
+        print("Couldn't parse input file:", err)
+        return None
 
 # GENERATION
 def load_model_config(model_config_path: str) -> ModelConfig:
@@ -94,15 +125,17 @@ def run_model(positive_prompt: str,
               steps: int,
               seed: int,
               cfg_scale: float,
-              sigma_min: 0.3,
-              sigma_max: 500,
-              sampler_type: str) -> AudioTensor:
+              sigma_min: float,
+              sigma_max: float,
+              sampler_type: str,
+              init_audio_args: tuple[AudioTensor, int, float] | None,
+              mask_args: MaskArgs | None) -> AudioTensor:
     
     sample_size = round(length * SAMPLE_RATE)
     # Set up text and timing conditioning
     positive_conditioning = [{
         "prompt": positive_prompt,
-        "seconds_start": 0, 
+        "seconds_start": 0,
         "seconds_total": length
     }]
     negative_conditioning = [{
@@ -110,6 +143,13 @@ def run_model(positive_prompt: str,
         "seconds_start": 0, 
         "seconds_total": length
     }] if negative_prompt is not None else None
+
+    init_audio = None
+    init_noise_level = None
+    if init_audio_args is not None:
+        (audio, sample_rate, noise_level) = init_audio_args
+        init_audio = (sample_rate, audio)
+        init_noise_level = noise_level
 
     # Generate stereo audio
     output = sd_tools_generate.generate_diffusion_cond(
@@ -124,7 +164,10 @@ def run_model(positive_prompt: str,
         sampler_type=sampler_type,
         device=DEVICE,
         seed=seed,
-        batch_size=1
+        batch_size=1,
+        init_audio=init_audio,
+        init_noise_level=init_noise_level,
+        mask_args=mask_args
     )
 
     # Rearrange audio batch to a single sequence

@@ -30,9 +30,17 @@ async function queueIfNeeded() {
                 seed_input.value = (parseInt(seed_input.value) + 1).toString();
             }
             try {
-                // Generate audio
-                const promptUrl = getRadioUrl(settings);
-                const { node, audioBuffer } = await getAudioBufferSourceNode(promptUrl);
+                // Build and send request
+                const {url, body} = buildGenerationRequest(settings);
+                const arrayBuffer = await fetch(url, {
+                    method: "POST",
+                    body,
+                }).then(res => res.arrayBuffer());
+                // Set up audioBuffer + node
+                const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+                const node = audioCtx.createBufferSource();
+                node.buffer = audioBuffer
+                node.connect(getDestinationNode());
                 
                 // Queue audio node
                 const queueTime = getLatestQueuedOrNow();
@@ -92,25 +100,37 @@ function estimatedGenerationTime(steps, length) {
 *     seed: number,
 *     steps: number,
 *     length: number,
+*     init_audio: {audio: Blob, init_noise_level: number} | null,
 * }} PromptSettings
 * Get the prompt settings from the controls on the page. Returns null if any of the prompt controls 
 * contain invalid input.
 * @returns {PromptSettings | null}
 */
 function getPromptSettings() {
-   let negative_prompt = null;
-   if (negative_prompt_enable_checkbox.checked || negative_prompt_textarea.value != "") {
-       negative_prompt = negative_prompt_textarea.value;
-   }
+    if (!cfg_input.checkValidity() || 
+    !sigma_min_input.checkValidity() ||
+    !sigma_max_input.checkValidity() ||
+    !seed_input.checkValidity() ||
+    !steps_input.checkValidity() ||
+    !length_input.checkValidity() ||
+    !init_noise_level_input.checkValidity()) {
+        return null;
+    }
+    
+    let negative_prompt = null;
+    if (negative_prompt_enable_checkbox.checked || negative_prompt_textarea.value != "") {
+        negative_prompt = negative_prompt_textarea.value;
+    }
 
-   if (!cfg_input.checkValidity() || 
-       !sigma_min_input.checkValidity() ||
-       !sigma_max_input.checkValidity() ||
-       !seed_input.checkValidity() ||
-       !steps_input.checkValidity() ||
-       !length_input.checkValidity()) {
-       return null;
-   }
+    let init_audio = null
+    const files = assertExists(init_audio_input.files);
+    if (init_audio_checkbox.checked && files.length == 1) {
+        init_audio = {
+            audio: files[0],
+            init_noise_level: parseFloat(init_noise_level_input.value)
+        };
+    }
+
    return {
        "positive_prompt": positive_prompt_textarea.value,
        "negative_prompt": negative_prompt,
@@ -120,47 +140,38 @@ function getPromptSettings() {
        "seed": parseInt(seed_input.value),
        "steps": parseInt(steps_input.value),
        "length": parseFloat(length_input.value),
+       "init_audio": init_audio,
    }
 }
 
 /**
-* Build the radio URL and query parameters using the given settings.
+* Build the request using the given settings.
 * @param {PromptSettings} settings 
-* @returns {URL} The prompt URL
+* @returns {{ url: URL, body: FormData } } The request
 */
-function getRadioUrl(settings) {
-   const radio_url = new URL("/radio", window.location.toString());
-   if (settings.positive_prompt != null) {
-       radio_url.searchParams.set("positive_prompt", settings.positive_prompt);
-   }
-   if (settings.negative_prompt != null) {
-       radio_url.searchParams.set("negative_prompt", settings.negative_prompt);
-   }
-   radio_url.searchParams.set("cfg_scale", settings.cfg.toString());
-   radio_url.searchParams.set("sigma_min", settings.sigma_min.toString());
-   radio_url.searchParams.set("sigma_max", settings.sigma_max.toString());
+function buildGenerationRequest(settings) {
+    const body = new FormData();
 
-   radio_url.searchParams.set("seed", settings.seed.toString());
-   radio_url.searchParams.set("steps", settings.steps.toString());
-   radio_url.searchParams.set("length", settings.length.toString());
+    const url = new URL("/radio", window.location.toString());
+    if (settings.positive_prompt != null) {
+        body.append("positive_prompt", settings.positive_prompt);
+    }
+    if (settings.negative_prompt != null) {
+        body.append("negative_prompt", settings.negative_prompt);
+    }
+    body.append("cfg_scale", settings.cfg.toString());
+    body.append("sigma_min", settings.sigma_min.toString());
+    body.append("sigma_max", settings.sigma_max.toString());
 
-   return radio_url;
-}
+    body.append("seed", settings.seed.toString());
+    body.append("steps", settings.steps.toString());
+    body.append("length", settings.length.toString());
 
-/**
-* Create an AudioBufferSourceNode from the given URL. This fetches the audio from the given URL, 
-* which may take a long time.
-* @param {URL} url The radio URL endpoint. This is what is fetched from to download the audio. 
-* @returns {Promise<{ node: AudioBufferSourceNode, audioBuffer: AudioBuffer }>} An AudioBufferSourceNode containing the generated audio
-*/
-async function getAudioBufferSourceNode(url) {
-   const arrayBuffer = await fetch(url).then((res) => res.arrayBuffer());
-   const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-   const node = audioCtx.createBufferSource();
-   node.buffer = audioBuffer
-
-   node.connect(getDestinationNode());
-   return {node, audioBuffer};
+    if (settings.init_audio != null) {
+        body.append("init_audio", settings.init_audio.audio);
+        body.append("init_noise_level", settings.init_audio.init_noise_level.toString());
+    }
+    return {url, body};
 }
 
 /**
@@ -611,6 +622,10 @@ const play_button = getElementTyped("play", HTMLButtonElement);
 const estimated_time_display = getElementTyped("estimated_time_display", HTMLSpanElement)
 const remaining_buffer_display = getElementTyped("remaining_buffer_display", HTMLSpanElement)
 const current_time_display = getElementTyped("current_time_display", HTMLSpanElement)
+
+const init_audio_input = getElementTyped("init_audio", HTMLInputElement);
+const init_audio_checkbox = getElementTyped("init_audio_checkbox", HTMLInputElement);
+const init_noise_level_input = getElementTyped("init_noise_level", HTMLInputElement);
 
 const queueList = getElementTyped("playlist", HTMLElement);
 
