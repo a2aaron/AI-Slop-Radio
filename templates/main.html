@@ -71,8 +71,8 @@
                     <input type="number" id="init_noise_level" name="init_noise_level" value="1.0" step="any"></input>
                 </ui-control>
                 <ui-control>
-                    <label for="mask_arg_checkbox">Enable mask args</label>
-                    <input type="checkbox" id="seed_increment" name="seed_increment"></input>
+                    <label for="mask_args_checkbox">Enable mask args</label>
+                    <input type="checkbox" id="mask_args_checkbox" name="mask_args_checkbox"></input>
                 </ui-control>
                 <ui-control>
                     <label for="paste_from">Paste From</label>
@@ -85,6 +85,26 @@
                 <ui-control>
                     <label for="crop_from">Crop From</label>
                     <input type="number" id="crop_from" name="crop_from" min="0.0" max="100.0" step="any"></input>
+                </ui-control>
+                <ui-control>
+                    <label for="mask_start">Mask Start</label>
+                    <input type="number" id="mask_start" name="mask_start" min="0.0" max="100.0" step="any"></input>
+                </ui-control>
+                <ui-control>
+                    <label for="mask_end">Mask End</label>
+                    <input type="number" id="mask_end" name="mask_end" min="0.0" max="100.0" step="any"></input>
+                </ui-control>
+                <ui-control>
+                    <label for="softness_left">Softness Left</label>
+                    <input type="number" id="softness_left" name="softness_left" min="0.0" max="100.0" step="any"></input>
+                </ui-control>
+                <ui-control>
+                    <label for="softness_right">Softness Right</label>
+                    <input type="number" id="softness_right" name="softness_right" min="0.0" max="100.0" step="any"></input>
+                </ui-control>
+                <ui-control>
+                    <label for="marination">Marination</label>
+                    <input type="number" id="marination" name="marination" step="any"></input>
                 </ui-control>
             </section>
             <section>

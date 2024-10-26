@@ -91,6 +91,19 @@ function estimatedGenerationTime(steps, length) {
 
 
 /**
+ * @typedef {{
+ *      paste_from: number;
+ *      paste_to: number;
+ *      crop_from: number;
+ *      mask_start: number;
+ *      mask_end: number;
+ *      softness_left: number;
+ *      softness_right: number;
+ *      marination: number;
+ * }} MaskArgs
+ */
+
+/**
  * @typedef {{ 
 *     positive_prompt: string | null,
 *     negative_prompt: string | null,
@@ -101,19 +114,32 @@ function estimatedGenerationTime(steps, length) {
 *     steps: number,
 *     length: number,
 *     init_audio: {audio: Blob, init_noise_level: number} | null,
+*     mask_args: MaskArgs | null
 * }} PromptSettings
 * Get the prompt settings from the controls on the page. Returns null if any of the prompt controls 
 * contain invalid input.
 * @returns {PromptSettings | null}
 */
 function getPromptSettings() {
-    if (!cfg_input.checkValidity() || 
-    !sigma_min_input.checkValidity() ||
-    !sigma_max_input.checkValidity() ||
-    !seed_input.checkValidity() ||
-    !steps_input.checkValidity() ||
-    !length_input.checkValidity() ||
-    !init_noise_level_input.checkValidity()) {
+    const inputs = [
+        cfg_input,
+        sigma_min_input,
+        sigma_max_input,
+        seed_input,
+        steps_input,
+        length_input,
+        init_noise_level_input,
+        paste_from_input,
+        paste_to_input,
+        crop_from_input,
+        mask_start_input,
+        mask_end_input,
+        softness_left_input,
+        softness_right_input,
+        marination_input,
+
+    ];
+    if (inputs.some(input => !input.checkValidity())) {
         return null;
     }
     
@@ -131,6 +157,20 @@ function getPromptSettings() {
         };
     }
 
+    let mask_args = null;
+    if (mask_args_checkbox.checked) {
+        mask_args = {
+            paste_from: parseFloat(paste_from_input.value),
+            paste_to: parseFloat(paste_to_input.value),
+            crop_from: parseFloat(crop_from_input.value),
+            mask_start: parseFloat(mask_start_input.value),
+            mask_end: parseFloat(mask_end_input.value),
+            softness_left: parseFloat(softness_left_input.value),
+            softness_right: parseFloat(softness_right_input.value),
+            marination: parseFloat(marination_input.value),
+        };
+    }
+
    return {
        "positive_prompt": positive_prompt_textarea.value,
        "negative_prompt": negative_prompt,
@@ -141,6 +181,7 @@ function getPromptSettings() {
        "steps": parseInt(steps_input.value),
        "length": parseFloat(length_input.value),
        "init_audio": init_audio,
+       "mask_args": mask_args,
    }
 }
 
@@ -152,10 +193,10 @@ function getPromptSettings() {
 function buildGenerationRequest(settings) {
     const body = new FormData();
 
-    const url = new URL("/radio", window.location.toString());
     if (settings.positive_prompt != null) {
         body.append("positive_prompt", settings.positive_prompt);
     }
+
     if (settings.negative_prompt != null) {
         body.append("negative_prompt", settings.negative_prompt);
     }
@@ -171,6 +212,19 @@ function buildGenerationRequest(settings) {
         body.append("init_audio", settings.init_audio.audio);
         body.append("init_noise_level", settings.init_audio.init_noise_level.toString());
     }
+
+    if (settings.mask_args != null) {
+        body.append("paste_from", settings.mask_args.paste_from.toString());
+        body.append("paste_to", settings.mask_args.paste_to.toString());
+        body.append("crop_from", settings.mask_args.crop_from.toString());
+        body.append("mask_start", settings.mask_args.mask_start.toString());
+        body.append("mask_end", settings.mask_args.mask_end.toString());
+        body.append("softness_left", settings.mask_args.softness_left.toString());
+        body.append("softness_right", settings.mask_args.softness_right.toString());
+        body.append("marination", settings.mask_args.marination.toString());
+    }
+
+    const url = new URL("/radio", window.location.toString());
     return {url, body};
 }
 
@@ -626,6 +680,16 @@ const current_time_display = getElementTyped("current_time_display", HTMLSpanEle
 const init_audio_input = getElementTyped("init_audio", HTMLInputElement);
 const init_audio_checkbox = getElementTyped("init_audio_checkbox", HTMLInputElement);
 const init_noise_level_input = getElementTyped("init_noise_level", HTMLInputElement);
+
+const mask_args_checkbox = getElementTyped("mask_args_checkbox", HTMLInputElement);
+const paste_from_input = getElementTyped("paste_from", HTMLInputElement);
+const paste_to_input = getElementTyped("paste_to", HTMLInputElement);
+const crop_from_input = getElementTyped("crop_from", HTMLInputElement);
+const mask_start_input = getElementTyped("mask_start", HTMLInputElement);
+const mask_end_input = getElementTyped("mask_end", HTMLInputElement);
+const softness_left_input = getElementTyped("softness_left", HTMLInputElement);
+const softness_right_input = getElementTyped("softness_right", HTMLInputElement);
+const marination_input = getElementTyped("marination", HTMLInputElement);
 
 const queueList = getElementTyped("playlist", HTMLElement);
 

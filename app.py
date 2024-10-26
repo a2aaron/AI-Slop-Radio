@@ -1,9 +1,9 @@
 from os import PathLike
 import flask
-from flask import request
+from flask import Request, request
 
 import io
-from typing import Any, BinaryIO, Literal, TypedDict, Union
+from typing import Any, BinaryIO, Literal, TypeVar, TypedDict, Union
 
 import json
 import torch
@@ -15,6 +15,7 @@ import stable_audio_tools.models.utils as sd_tools_util
 import stable_audio_tools.inference.generation as sd_tools_generate
 
 # TYPES
+T = TypeVar("T")
 ModelConfig = Any
 DeviceStr = Literal["cuda", "cpu"]
 ConditioningDict = dict
@@ -24,6 +25,11 @@ class MaskArgs(TypedDict):
     pastefrom: float
     pasteto: float
     cropfrom: float
+    maskstart: float
+    maskend: float
+    softnessL: float
+    softnessR: float
+    marination: float
 # CONSTANTS
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MODEL_CONFIG_PATH = "C:/Users/a2aar/dev/Python/realtime-neuralnets/stable_audio_open_1.0_config.json"
@@ -32,7 +38,7 @@ LENGTH = 10.0
 STEPS = 20
 CHANNELS = 2
 BYTES_PER_CHANNEL = 4 # float32 format used for output stream
-VOLUME = 0.5
+VOLUME = 1.0
 INIT_SEED = 0
 SAMPLE_RATE = 44100
 SAMPLE_SIZE = round(LENGTH * SAMPLE_RATE) # MODEL_CONFIG["sample_size"]
@@ -60,14 +66,8 @@ def radio():
     cfg_scale = request.form.get('cfg_scale', CFG_SCALE, type=float)
     sampler_type = request.form.get('sampler_type', SAMPLER_TYPE)
 
-    mask_args: MaskArgs | None = None
-    if ('paste_from' in request.form and 'paste_to' in request.form and 'crop_from' in request.form):
-        mask_args = {
-            'pastefrom': request.form.get('paste_from', type=float), 
-            'pasteto': request.form.get('paste_to', type=float),
-            'cropfrom': request.form.get('crop_from', type=float),
-        }
-
+    mask_args = get_mask_args(request)
+    print(mask_args)
     
     init_audio = try_get_init_audio(request)
 
@@ -92,7 +92,40 @@ def radio():
     write_to_file(buffer, generated_audio)
     out_bytes = buffer.getvalue()
     
-    return out_bytes, {"Content-Type": "audio/wav"}    
+    return out_bytes, {"Content-Type": "audio/wav"} 
+
+
+def get_mask_args(request: Request):
+    def get(request: Request, key: str) -> float:
+        x = request.form.get(key, type=float)
+        if x is None:
+            raise ValueError(f"Expected {key} to be parseable as float. Got {request.form.get(key)} instead.")
+        return x
+
+    keys = [
+        'paste_from',
+        'paste_to',
+        'crop_from',
+        'softness_right',
+        'softness_left',
+        'mask_start',
+        'mask_end',
+        'marination',
+    ]
+
+    if all(key in request.form for key in keys):
+        mask_args: MaskArgs = {
+            'pastefrom': get(request, 'paste_from'),
+            'pasteto': get(request, 'paste_to'),
+            'cropfrom': get(request, 'crop_from'),
+            'softnessR': get(request, 'softness_right'),
+            'softnessL': get(request, 'softness_left'),
+            'maskstart': get(request, 'mask_start'),
+            'maskend': get(request, 'mask_end'),
+            'marination': get(request, 'marination'),
+        }
+        return mask_args   
+    return None
 
 def try_get_init_audio(request: flask.Request) -> tuple[AudioTensor, int, float] | None:
     if 'init_audio' not in request.files:
