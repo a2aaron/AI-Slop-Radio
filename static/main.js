@@ -92,6 +92,14 @@ function estimatedGenerationTime(steps, length) {
 
 /**
  * @typedef {{
+ *      audio: Blob;
+ *      source: string;
+ *      init_noise_level: number;
+ * }} InitAudioArgs
+ */
+
+/**
+ * @typedef {{
  *      paste_from: number;
  *      paste_to: number;
  *      crop_from: number;
@@ -113,7 +121,7 @@ function estimatedGenerationTime(steps, length) {
 *     seed: number,
 *     steps: number,
 *     length: number,
-*     init_audio: {audio: Blob, init_noise_level: number} | null,
+*     init_audio: InitAudioArgs | null,
 *     mask_args: MaskArgs | null
 * }} PromptSettings
 * Get the prompt settings from the controls on the page. Returns null if any of the prompt controls 
@@ -149,10 +157,10 @@ function getPromptSettings() {
     }
 
     let init_audio = null
-    const files = assertExists(init_audio_input.files);
-    if (init_audio_checkbox.checked && files.length == 1) {
+    if (init_audio_checkbox.checked && INIT_AUDIO != null) {
         init_audio = {
-            audio: files[0],
+            audio: INIT_AUDIO.audio,
+            source: INIT_AUDIO.source,
             init_noise_level: parseFloat(init_noise_level_input.value)
         };
     }
@@ -301,7 +309,17 @@ class PlaylistItem extends HTMLElement {
         this.queueState = "queued";
         this.innerText = this.text + " | ";
 
-        this.url = await getWavDownloadUrl(buffer);
+        const blob = getWavBlob(buffer);
+
+        if (wander_checkbox.checked) {
+            INIT_AUDIO = {
+                audio: blob,
+                source: `${this.promptSettings?.positive_prompt} ${this.promptSettings?.seed}`
+            };
+        }
+
+        this.url = window.URL.createObjectURL(blob);
+
         const downloadLink = document.createElement("a");
         downloadLink.innerText = "[Download]";
         downloadLink.onclick = (event) => event.stopPropagation();
@@ -352,7 +370,18 @@ class PlaylistItem extends HTMLElement {
         if (this.promptSettings.negative_prompt != null) {
             promptText = `${this.promptSettings.positive_prompt} (negative: ${this.promptSettings.negative_prompt})`
         }
-        let text = `${promptText} [seed = ${this.promptSettings.seed}, steps = ${this.promptSettings.steps}]`;
+        /** @type {[string, string][]} */
+        let tags = [
+            ["seed", this.promptSettings.seed.toString()],
+            ["steps", this.promptSettings.steps.toString()]
+        ];
+
+        if (this.promptSettings.init_audio != null) {
+            tags.push(["init", this.promptSettings.init_audio.source]);
+        }
+        const tagText = `[${tags.map(([name, val]) => `${name} = ${val}`).join(", ")}]`
+
+        let text = `${promptText} ${tagText}`;
         if (this.queueTime != undefined) {
             const startTime = this.queueTime.toFixed(1);
             const endTime = (this.queueTime + this.promptSettings.length).toFixed(1);
@@ -428,16 +457,16 @@ function updateQueue() {
 // ################
 // # WAV DOWNLOAD #
 // ################
+
 /**
  * @param {AudioBuffer} buffer 
- * @returns {Promise<string>} a blob url that can download the blob.
+ * @returns {Blob} the audio buffer encoded as a wav file
  */
-async function getWavDownloadUrl(buffer) {
+function getWavBlob(buffer) {
     let header = getWavHeader(buffer);
     let body = getWavBody(buffer);
     let blob = new Blob([header, body], { 'type': 'audio/wav' });
-    let url = window.URL.createObjectURL(blob);
-    return url;
+    return blob;
 }
 
 /**
@@ -647,6 +676,9 @@ let RECENT_STEPSECONDS_INDEX = 0;
 let RECENT_GENERATIONS = [];
 const MAX_RECENT_GENERATIONS = 5;
 
+/** @type {{ audio: Blob, source: string } | null} */
+let INIT_AUDIO = null;
+
 customElements.define("playlist-item", PlaylistItem);
 
 const audioCtx = new window.AudioContext();
@@ -679,6 +711,7 @@ const current_time_display = getElementTyped("current_time_display", HTMLSpanEle
 
 const init_audio_input = getElementTyped("init_audio", HTMLInputElement);
 const init_audio_checkbox = getElementTyped("init_audio_checkbox", HTMLInputElement);
+const wander_checkbox = getElementTyped("wander_checkbox", HTMLInputElement);
 const init_noise_level_input = getElementTyped("init_noise_level", HTMLInputElement);
 
 const mask_args_checkbox = getElementTyped("mask_args_checkbox", HTMLInputElement);
@@ -702,6 +735,16 @@ play_button.onclick = async (_) => {
         play_button.innerText = "Play";
     }
 };
+
+init_audio_input.onchange = (_) => {
+    const files = assertExists(init_audio_input.files);
+    if (files.length > 0) {
+        INIT_AUDIO = {
+            audio: files[0],
+            source: files[0].name
+        };
+    }
+}
 
 volume_slider.oninput = (_) => setVolumeFromSlider();
 
