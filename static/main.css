@@ -50,6 +50,7 @@ input:invalid {
 
 [data-queue-state] {
     transition: 1s;
+    overflow: hidden;
 }
 
 
