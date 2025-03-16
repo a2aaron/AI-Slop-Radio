@@ -59,16 +59,17 @@
             <section>
                 <h2>Outpainting and Variation</h2>
                 <ui-control>
-                    <label for="init_audio_checkbox">Enable init audio</label>
-                    <input type="checkbox" id="init_audio_checkbox" name="init_audio_checkbox"></input>
+                    <label for="init_audio_dropdown">Init Audio</label>
+                    <select id="init_audio_dropdown" name="init_audio_dropdown">
+                        <option value="off">Off</option>
+                        <option value="file">From File</option>
+                        <option value="wander">Most Recent Generation</option>
+                        <option value="microphone">Microphone</option>
+                    </select>
                 </ui-control>
                 <ui-control>
-                    <label for="wander_checkbox">Wander Init Audio</label>
-                    <input type="checkbox" id="wander_checkbox" name="wander_checkbox"></input>
-                </ui-control>
-                <ui-control>
-                    <label for="init_audio">Init Audio</label>
-                    <input type="file" id="init_audio" name="init_audio"></input>
+                    <label for="init_audio_upload">Upload file</label>
+                    <input type="file" id="init_audio_upload" name="init_audio_upload"></input>
                 </ui-control>
                 <ui-control>
                     <label for="init_noise_level">Init Noise Level</label>

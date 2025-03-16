@@ -156,11 +156,12 @@ function getPromptSettings() {
         negative_prompt = negative_prompt_textarea.value;
     }
 
-    let init_audio = null
-    if (init_audio_checkbox.checked && INIT_AUDIO != null) {
-        init_audio = {
-            audio: INIT_AUDIO.audio,
-            source: INIT_AUDIO.source,
+    let init_audio_args = null;
+    let init_audio_blob = getInitAudioBlob();
+    if (init_audio_blob != null) {
+        init_audio_args = {
+            audio: init_audio_blob.audio,
+            source: init_audio_blob.source,
             init_noise_level: parseFloat(init_noise_level_input.value)
         };
     }
@@ -188,15 +189,28 @@ function getPromptSettings() {
        "seed": parseInt(seed_input.value),
        "steps": parseInt(steps_input.value),
        "length": parseFloat(length_input.value),
-       "init_audio": init_audio,
+       "init_audio": init_audio_args,
        "mask_args": mask_args,
    }
 }
 
 /**
+ * @returns {BlobWithSource | null}
+ */
+function getInitAudioBlob() {
+    switch (init_audio_dropdown.value) {
+        case "off": return null;
+        case "file": return UPLOADED_AUDIO;
+        // Try to return latest playlist item. Otherwise, fallback to uploaded audio.
+        case "wander": return getLatestPlaylistItemBlob() ?? UPLOADED_AUDIO;
+        case "microphone": return null;
+    }
+    throw new Error(`Invalid dropdown setting ${init_audio_dropdown.value}`);
+}
+/**
 * Build the request using the given settings.
 * @param {PromptSettings} settings 
-* @returns {{ url: URL, body: FormData } } The request
+* @returns {{ url: URL, body: FormData }} The request
 */
 function buildGenerationRequest(settings) {
     const body = new FormData();
@@ -287,6 +301,7 @@ class PlaylistItem extends HTMLElement {
         super();
         this.buffer = null;
         this.queueTime = null;
+        this.blob = null;
     }
     /**
      * Initialize the PlaylistItem in the "generating" state.
@@ -309,16 +324,8 @@ class PlaylistItem extends HTMLElement {
         this.queueState = "queued";
         this.innerText = this.text + " | ";
 
-        const blob = getWavBlob(buffer);
-
-        if (wander_checkbox.checked) {
-            INIT_AUDIO = {
-                audio: blob,
-                source: `${this.promptSettings?.positive_prompt} ${this.promptSettings?.seed}`
-            };
-        }
-
-        this.url = window.URL.createObjectURL(blob);
+        this.blob = getWavBlob(buffer);
+        this.url = window.URL.createObjectURL(this.blob);
 
         const downloadLink = document.createElement("a");
         downloadLink.innerText = "[Download]";
@@ -347,6 +354,25 @@ class PlaylistItem extends HTMLElement {
     }
 
     /**
+     * @returns {BlobWithSource | null}
+     */
+    get blobWithSource() {
+        if (this.blob == null) {
+            return null;
+        }
+        return {
+            audio: this.blob,
+            source: `${this.promptSettings?.positive_prompt} ${this.promptSettings?.seed}`
+        };
+    }
+
+    /**
+     * The state of the item.
+     * - generating - item has been queued up and a request was sent but the response has not returned yet
+     * - queued - item has been queued up and the item has it's blob for it's generated audio
+     * - playing - item is currently playing audio
+     * - done - item is no longer playing audio, but the blob for it's generated audio is still valid
+     * - expired - item is done playing and has been removed from the recent generations queue. the blob for it's generated audio is no longer valid
      * @returns {PlaylistItemState}
      */
     get queueState() {
@@ -362,6 +388,9 @@ class PlaylistItem extends HTMLElement {
         this.dataset.queueState = state;
     }
 
+    /**
+     * The text to display on the item
+     */
     get text() {
         if (this.promptSettings == undefined) {
             return "";
@@ -416,6 +445,19 @@ function expireOldestItem() {
         .sort((a, b) => assertExists(a.queueTime) - assertExists(b.queueTime));
     if (items.length > 0) {
         items[0].setExpired();
+    }
+}
+
+/**
+ * Get the latest item in the 
+ * @returns {BlobWithSource | null}
+ */
+function getLatestPlaylistItemBlob() {
+    let doneGenerations = RECENT_GENERATIONS.findLast(item => item.blob != null);
+    if (doneGenerations != undefined) {
+        return doneGenerations.blobWithSource;
+    } else {
+        return null;
     }
 }
 
@@ -676,8 +718,10 @@ let RECENT_STEPSECONDS_INDEX = 0;
 let RECENT_GENERATIONS = [];
 const MAX_RECENT_GENERATIONS = 5;
 
-/** @type {{ audio: Blob, source: string } | null} */
-let INIT_AUDIO = null;
+
+/** @typedef {{ audio: Blob, source: string }} BlobWithSource */
+/** @type {BlobWithSource | null} */
+let UPLOADED_AUDIO = null;
 
 customElements.define("playlist-item", PlaylistItem);
 
@@ -709,9 +753,8 @@ const estimated_time_display = getElementTyped("estimated_time_display", HTMLSpa
 const remaining_buffer_display = getElementTyped("remaining_buffer_display", HTMLSpanElement)
 const current_time_display = getElementTyped("current_time_display", HTMLSpanElement)
 
-const init_audio_input = getElementTyped("init_audio", HTMLInputElement);
-const init_audio_checkbox = getElementTyped("init_audio_checkbox", HTMLInputElement);
-const wander_checkbox = getElementTyped("wander_checkbox", HTMLInputElement);
+const init_audio_upload_input = getElementTyped("init_audio_upload", HTMLInputElement);
+const init_audio_dropdown = getElementTyped("init_audio_dropdown", HTMLSelectElement);
 const init_noise_level_input = getElementTyped("init_noise_level", HTMLInputElement);
 
 const mask_args_checkbox = getElementTyped("mask_args_checkbox", HTMLInputElement);
@@ -736,10 +779,10 @@ play_button.onclick = async (_) => {
     }
 };
 
-init_audio_input.onchange = (_) => {
-    const files = assertExists(init_audio_input.files);
+init_audio_upload_input.onchange = (_) => {
+    const files = assertExists(init_audio_upload_input.files);
     if (files.length > 0) {
-        INIT_AUDIO = {
+        UPLOADED_AUDIO = {
             audio: files[0],
             source: files[0].name
         };
