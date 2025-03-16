@@ -156,6 +156,7 @@ function getPromptSettings() {
         negative_prompt = negative_prompt_textarea.value;
     }
 
+    let length = parseFloat(length_input.value);
     let init_audio_args = null;
     let init_audio_blob = getInitAudioBlob();
     if (init_audio_blob != null) {
@@ -164,6 +165,7 @@ function getPromptSettings() {
             source: init_audio_blob.source,
             init_noise_level: parseFloat(init_noise_level_input.value)
         };
+        length = init_audio_blob.length;
     }
 
     let mask_args = null;
@@ -188,7 +190,7 @@ function getPromptSettings() {
        "sigma_max": parseFloat(sigma_max_input.value),
        "seed": parseInt(seed_input.value),
        "steps": parseInt(steps_input.value),
-       "length": parseFloat(length_input.value),
+       "length": length,
        "init_audio": init_audio_args,
        "mask_args": mask_args,
    }
@@ -198,14 +200,13 @@ function getPromptSettings() {
  * @returns {BlobWithSource | null}
  */
 function getInitAudioBlob() {
-    switch (init_audio_dropdown.value) {
+    switch (parseInitAudioDropdownValue(init_audio_dropdown.value)) {
         case "off": return null;
         case "file": return UPLOADED_AUDIO;
         // Try to return latest playlist item. Otherwise, fallback to uploaded audio.
         case "wander": return getLatestPlaylistItemBlob() ?? UPLOADED_AUDIO;
         case "microphone": return null;
     }
-    throw new Error(`Invalid dropdown setting ${init_audio_dropdown.value}`);
 }
 /**
 * Build the request using the given settings.
@@ -357,12 +358,13 @@ class PlaylistItem extends HTMLElement {
      * @returns {BlobWithSource | null}
      */
     get blobWithSource() {
-        if (this.blob == null) {
+        if (this.blob == null || this.buffer == null) {
             return null;
         }
         return {
             audio: this.blob,
-            source: `${this.promptSettings?.positive_prompt} ${this.promptSettings?.seed} (@ ${this.queueTime?.toFixed(2)})`
+            source: `${this.promptSettings?.positive_prompt} ${this.promptSettings?.seed} (@ ${this.queueTime?.toFixed(2)})`,
+            length: getLengthInSeconds(this.buffer),
         };
     }
 
@@ -453,9 +455,9 @@ function expireOldestItem() {
  * @returns {BlobWithSource | null}
  */
 function getLatestPlaylistItemBlob() {
-    let doneGenerations = RECENT_GENERATIONS.findLast(item => item.blob != null);
-    if (doneGenerations != undefined) {
-        return doneGenerations.blobWithSource;
+    let latestItem = RECENT_GENERATIONS.findLast(item => item.blob != null);
+    if (latestItem != undefined) {
+        return latestItem.blobWithSource;
     } else {
         return null;
     }
@@ -639,6 +641,86 @@ function setVolumeFromSlider() {
 }
 
 
+/**
+ * @typedef {"off" | "file" | "wander" | "microphone"} InitAudioDropdownValue
+ * @param {string} input 
+ * @returns {InitAudioDropdownValue}
+ */
+function parseInitAudioDropdownValue(input) {
+    switch (input) {
+        case "off":
+        case "file":
+        case "wander":
+        case "microphone": return input;
+        default: throw new Error(`Invalid dropdown value: ${input}`)
+    }    
+}
+
+async function setFileUploaded() {
+    if (init_audio_upload_input.files != null && init_audio_upload_input.files?.length > 0) {
+        let file = init_audio_upload_input.files[0];
+        let audioBuffer = await audioCtx.decodeAudioData(await file.arrayBuffer());
+        let length = getLengthInSeconds(audioBuffer);
+        length_input.value = length.toFixed(2);
+        UPLOADED_AUDIO = {
+            audio: file,
+            source: file.name,
+            length: length,
+        };
+    }
+}
+
+/**
+ * Enable/disable various elements on the page based on the init audio dropdown
+ */
+function setEnabilityInitAudioControls() {
+    let value = parseInitAudioDropdownValue(init_audio_dropdown.value);
+    switch (value) {
+        case "off":
+            setEnabled(length_input, true);
+            setEnabled(mask_args_checkbox, false);
+            setEnabled(init_audio_upload_input, false);
+            setEnabled(init_noise_level_input, false);
+            break;
+        case "file":
+        case "wander":
+            setEnabled(length_input, false);
+            setEnabled(mask_args_checkbox, true);
+            setEnabled(init_audio_upload_input, true);
+            setEnabled(init_noise_level_input, true);
+            break;
+        case "microphone":
+            setEnabled(length_input, true);
+            setEnabled(mask_args_checkbox, true);
+            setEnabled(init_audio_upload_input, false);
+            setEnabled(init_noise_level_input, true);
+            break;
+    }
+}
+
+
+function setEnabilityMaskArgs() {
+    let checked = mask_args_checkbox.checked;
+    setEnabled(paste_from_input, checked);
+    setEnabled(paste_to_input, checked);
+    setEnabled(crop_from_input, checked);
+    setEnabled(mask_start_input, checked);
+    setEnabled(mask_end_input, checked);
+    setEnabled(softness_left_input, checked);
+    setEnabled(softness_right_input, checked);
+    setEnabled(marination_input, checked);
+}
+
+/**
+ * 
+ * @param {HTMLInputElement} control 
+ * @param {boolean} enabled 
+ */
+function setEnabled(control, enabled) {
+    let disabled = !enabled;
+    control.setAttribute("pseudo-disabled", disabled.toString());
+}
+
 // #####################
 // # UTILITY FUNCTIONS #
 // #####################
@@ -700,6 +782,13 @@ function getDestinationNode() {
     return gainNode;
 }
 
+/**
+ * @param {AudioBuffer} audioBuffer 
+ * @returns The length of the audio buffer, in seconds
+ */
+function getLengthInSeconds(audioBuffer) {
+    return audioBuffer.length / audioBuffer.sampleRate
+}
 
 // ########
 // # MAIN #
@@ -719,7 +808,7 @@ let RECENT_GENERATIONS = [];
 const MAX_RECENT_GENERATIONS = 5;
 
 
-/** @typedef {{ audio: Blob, source: string }} BlobWithSource */
+/** @typedef {{ audio: Blob, source: string, length: number }} BlobWithSource */
 /** @type {BlobWithSource | null} */
 let UPLOADED_AUDIO = null;
 
@@ -779,15 +868,13 @@ play_button.onclick = async (_) => {
     }
 };
 
-init_audio_upload_input.onchange = (_) => {
-    const files = assertExists(init_audio_upload_input.files);
-    if (files.length > 0) {
-        UPLOADED_AUDIO = {
-            audio: files[0],
-            source: files[0].name
-        };
-    }
+init_audio_upload_input.onchange = async (_) => {
+    await setFileUploaded();
 }
+
+init_audio_dropdown.onchange = (e) => setEnabilityInitAudioControls();
+
+mask_args_checkbox.onchange = (_) => setEnabilityMaskArgs();
 
 volume_slider.oninput = (_) => setVolumeFromSlider();
 
@@ -800,3 +887,7 @@ setInterval(updateUI, 100);
 
 updateUI();
 setVolumeFromSlider();
+setEnabilityInitAudioControls();
+setEnabilityMaskArgs();
+setFileUploaded();
+

@@ -79,3 +79,11 @@ input:invalid {
 [data-queue-state="generating"] {
     background: khaki;
 }
+
+[pseudo-disabled="true"] {
+    opacity: 0.5;
+}
+
+label:has(~ [pseudo-disabled="true"]) {
+    opacity: 0.5;
+}
