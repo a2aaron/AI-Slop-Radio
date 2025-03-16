@@ -9,27 +9,12 @@ import json
 import torch
 import torchaudio
 
-import einops
 import stable_audio_tools as sd_tools
 import stable_audio_tools.models.utils as sd_tools_util
-import stable_audio_tools.inference.generation as sd_tools_generate
 
-# TYPES
-T = TypeVar("T")
-ModelConfig = Any
-DeviceStr = Literal["cuda", "cpu"]
-ConditioningDict = dict
-Model = Any
-AudioTensor = torch.Tensor
-class MaskArgs(TypedDict):
-    pastefrom: float
-    pasteto: float
-    cropfrom: float
-    maskstart: float
-    maskend: float
-    softnessL: float
-    softnessR: float
-    marination: float
+import generate
+from generate import AudioTensor, DeviceStr, MaskArgs, Model, ModelConfig
+
 # CONSTANTS
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 MODEL_CONFIG_PATH = "C:/Users/a2aar/dev/Python/realtime-neuralnets/stable_audio_open_1.0_config.json"
@@ -71,10 +56,13 @@ def radio():
     
     init_audio = try_get_init_audio(request)
 
-    generated_audio = run_model(
+    generated_audio = generate.run_model(
+        model=MODEL,
+        device=DEVICE,
         positive_prompt=positive_prompt,
         negative_prompt=negative_prompt,
         length=length,
+        sample_rate=SAMPLE_RATE,
         steps=steps,
         seed=seed,
         sigma_min=sigma_min,
@@ -150,66 +138,6 @@ def load_model(model_config: ModelConfig, model_ckpt_path: str, device: DeviceSt
     model.load_state_dict(sd_tools_util.load_ckpt_state_dict(model_ckpt_path))
     model = model.to(device)
     return model
-
-# Returns a tensor of shape [2, SAMPLE_SIZE]
-def run_model(positive_prompt: str,
-              negative_prompt: str | None, 
-              length: float,
-              steps: int,
-              seed: int,
-              cfg_scale: float,
-              sigma_min: float,
-              sigma_max: float,
-              sampler_type: str,
-              init_audio_args: tuple[AudioTensor, int, float] | None,
-              mask_args: MaskArgs | None) -> AudioTensor:
-    
-    sample_size = round(length * SAMPLE_RATE)
-    # Set up text and timing conditioning
-    positive_conditioning = [{
-        "prompt": positive_prompt,
-        "seconds_start": 0,
-        "seconds_total": length
-    }]
-    negative_conditioning = [{
-        "prompt": negative_prompt,
-        "seconds_start": 0, 
-        "seconds_total": length
-    }] if negative_prompt is not None else None
-
-    init_audio = None
-    init_noise_level = None
-    if init_audio_args is not None:
-        (audio, sample_rate, noise_level) = init_audio_args
-        init_audio = (sample_rate, audio)
-        init_noise_level = noise_level
-
-    # Generate stereo audio
-    output = sd_tools_generate.generate_diffusion_cond(
-        MODEL,
-        steps=steps,
-        cfg_scale=cfg_scale,
-        conditioning=positive_conditioning,
-        negative_conditioning=negative_conditioning,
-        sample_size=sample_size,
-        sigma_min=sigma_min,
-        sigma_max=sigma_max,
-        sampler_type=sampler_type,
-        device=DEVICE,
-        seed=seed,
-        batch_size=1,
-        init_audio=init_audio,
-        init_noise_level=init_noise_level,
-        mask_args=mask_args
-    )
-
-    # Rearrange audio batch to a single sequence
-    output = einops.rearrange(output, "b d n -> d (b n)")
-
-    # Peak normalize, clip, 
-    max_value = torch.max(torch.abs(output))
-    output = output.to(torch.float32).div(max_value).clamp(-1, 1)
-    return output
 
 # WAV WRITING
 def write_to_file(output_file: Union[BinaryIO, str, PathLike], audio: AudioTensor):

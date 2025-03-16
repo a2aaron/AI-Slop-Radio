@@ -362,7 +362,7 @@ class PlaylistItem extends HTMLElement {
         }
         return {
             audio: this.blob,
-            source: `${this.promptSettings?.positive_prompt} ${this.promptSettings?.seed}`
+            source: `${this.promptSettings?.positive_prompt} ${this.promptSettings?.seed} (@ ${this.queueTime?.toFixed(2)})`
         };
     }
 
