@@ -23,42 +23,51 @@ async function queueIfNeeded() {
         const enoughBuffer = remainingBufferTime() > minimumBuffer;
         if (!enoughBuffer) {
             INFLIGHT_GENERATIONS += 1;
-            const now = Date.now();
 
-            const item = pushQueueItem(settings);
+            await queueItem(settings);
+
+            // Post-Generation Logic
             if (increment_seed_checkbox.checked) {
                 seed_input.value = (parseInt(seed_input.value) + 1).toString();
             }
-            try {
-                // Build and send request
-                const { url, body } = buildGenerationRequest(settings);
-                const arrayBuffer = await fetch(url, {
-                    method: "POST",
-                    body,
-                }).then(res => res.arrayBuffer());
-                // Set up audioBuffer + node
-                const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-                const node = audioCtx.createBufferSource();
-                node.buffer = audioBuffer
-                node.connect(getDestinationNode());
 
-                // Queue audio node
-                const queueTime = getLatestQueuedOrNow();
-                LATEST_QUEUED_TIME = queueTime + getPreciseDuration(settings.length);
-                node.start(queueTime);
-
-                // Update playlist 
-                await item.setQueued(audioBuffer, queueTime);
-
-                // Update stats
-                const elapsed = (Date.now() - now) / 1000.0;
-                recordGenerationStats(settings.steps, audioBuffer.duration, elapsed);
-                setEstimatedTimeDisplay()
-            } catch (error) {
-                item.setExpired();
-                console.error(error);
-            }
             INFLIGHT_GENERATIONS -= 1;
+        }
+    }
+
+    /**
+     * @param {PromptSettings} settings
+     */
+    async function queueItem(settings) {
+        const now = Date.now();
+        const item = pushQueueItem(settings);
+        try {
+            // Build and send request
+            const { url, body } = buildGenerationRequest(settings);
+            const response = await fetch(url, { method: "POST", body})
+            
+            // Set up audioBuffer + node
+            const arrayBuffer = await response.arrayBuffer();
+            const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+            const node = audioCtx.createBufferSource();
+            node.buffer = audioBuffer;
+            node.connect(getDestinationNode());
+
+            // Queue audio node
+            const queueTime = getLatestQueuedOrNow();
+            LATEST_QUEUED_TIME = queueTime + getPreciseDuration(settings.length);
+            node.start(queueTime);
+
+            // Update playlist 
+            await item.setQueued(audioBuffer, queueTime);
+
+            // Update stats
+            const elapsed = (Date.now() - now) / 1000.0;
+            recordGenerationStats(settings.steps, audioBuffer.duration, elapsed);
+            setEstimatedTimeDisplay();
+        } catch (error) {
+            item.setExpired();
+            console.error(error);
         }
     }
 }
@@ -206,7 +215,7 @@ function getInitAudioBlob() {
         // Try to return latest playlist item. Otherwise, fallback to uploaded audio.
         case "wander": return getLatestPlaylistItemBlob() ?? UPLOADED_AUDIO;
         case "microphone": return LATEST_RECORDING;
-        case "microphone_auto": throw Error("Not implemented");
+        case "microphone_auto": return LATEST_RECORDING;
     }
 }
 /**
@@ -650,7 +659,7 @@ function getInitAudioDropdownValue() {
         case "off":
         case "file":
         case "wander":
-        case "microphone": 
+        case "microphone":
         case "microphone_auto": return init_audio_dropdown.value;
         default: throw new Error(`Invalid dropdown value: ${init_audio_dropdown.value}`)
     }
@@ -665,21 +674,32 @@ async function setFileUploaded() {
     }
 }
 
-async function initAudioDropdownOnChange() {
-    setEnabilityInitAudioControls();
+/**
+ * Should be called on change of the init_audio_dropdown. Handles effects of changing the dropdown value.
+ * @param {InitAudioDropdownValue} value
+ */
+async function initAudioDropdownOnChange(value) {
+    setEnabilityInitAudioControls(value);
 
-    if (getInitAudioDropdownValue() == "microphone" || getInitAudioDropdownValue() == "microphone_auto") {
+    if (value == "microphone" || value == "microphone_auto") {
         if (MICROPHONE == null) {
             MICROPHONE = await tryInitializeMicrophone();
         }
+    }
+
+    if (value == "microphone_auto") {
+        setAutorecordingLength(getLengthInputValue());
+    } else {
+        tryStopMicrophone();
     }
 }
 
 /**
  * Enable/disable various elements on the page based on the init audio dropdown
+ * @param {InitAudioDropdownValue} value 
  */
-function setEnabilityInitAudioControls() {
-    switch (getInitAudioDropdownValue()) {
+function setEnabilityInitAudioControls(value) {
+    switch (value) {
         case "off":
             setEnabled(length_input, true);
             setEnabled(mask_args_checkbox, false);
@@ -889,7 +909,7 @@ const mic_stop = getElementTyped("mic_stop", HTMLButtonElement);
 const queueList = getElementTyped("playlist", HTMLElement);
 
 // Event Handlers
-play_button.onclick = async (_) => {
+play_button.onclick = async (/** @type {any} */ _) => {
     IS_PLAYING = !IS_PLAYING;
     if (IS_PLAYING) {
         play_button.innerText = "Stop";
@@ -898,21 +918,30 @@ play_button.onclick = async (_) => {
     }
 };
 
-init_audio_upload_input.onchange = async (_) => {
+init_audio_upload_input.onchange = async (/** @type {any} */ _) => {
     await setFileUploaded();
 }
 
-init_audio_dropdown.onchange = async (e) => {
-    await initAudioDropdownOnChange();
+init_audio_dropdown.onchange = async (/** @type {any} */ e) => {
+    await initAudioDropdownOnChange(getInitAudioDropdownValue());
 };
 
-mask_args_checkbox.onchange = (_) => setEnabilityMaskArgs();
+mask_args_checkbox.onchange = (/** @type {any} */ _) => setEnabilityMaskArgs();
 
-volume_slider.oninput = (_) => setVolumeFromSlider();
+volume_slider.oninput = (/** @type {any} */ _) => setVolumeFromSlider();
 
-steps_input.onchange = (_) => setEstimatedTimeDisplay();
+steps_input.onchange = (/** @type {any} */ _) => setEstimatedTimeDisplay();
 
-length_input.onchange = (_) => setEstimatedTimeDisplay();
+length_input.onchange = (/** @type {any} */ _) => {
+    setEstimatedTimeDisplay();
+    if (getInitAudioDropdownValue() == "microphone_auto")
+    {
+        setAutorecordingLength(getLengthInputValue());
+    }
+    else {
+        stopAutorecording();
+    }
+};
 
 mic_start.onclick = () => { tryStartMicrophone(); }
 mic_stop.onclick = () => { tryStopMicrophone(); }
@@ -922,7 +951,7 @@ setInterval(updateUI, 100);
 
 updateUI();
 setVolumeFromSlider();
-initAudioDropdownOnChange()
+initAudioDropdownOnChange(getInitAudioDropdownValue());
 setEnabilityMaskArgs();
 setFileUploaded();
 
@@ -931,10 +960,14 @@ function setMicrophoneStatus() {
         mic_status_span.innerText = "Not initialized";
     } else {
         let latest_recorded = LATEST_RECORDING != null ? `${LATEST_RECORDING.length.toFixed(2)}s` : "none";
-        const current_recording_time = RECORDING_START_TIME != null ? (Date.now() - RECORDING_START_TIME) / 1000.0 : null;
+        const current_recording_time = getCurrentRecordingTime();
         let currently_recorded = current_recording_time != null ? `${current_recording_time.toFixed(2)}s` : "none";
         mic_status_span.innerText = `${MICROPHONE.state}\ncurrently recorded: ${currently_recorded}\nlatest recorded: ${latest_recorded}`;
     }
+}
+
+function getCurrentRecordingTime() {
+    return RECORDING_START_TIME != null ? (Date.now() - RECORDING_START_TIME) / 1000.0 : null;
 }
 
 /**
@@ -955,14 +988,14 @@ async function tryInitializeMicrophone() {
         };
 
         microphone.onstart = (e) => {
-            RECORDING_START_TIME = Date.now();
+            console.log("Started mic");
         }
 
         microphone.onstop = async (e) => {
+            console.log("Stopped Mic");
             let blob = new Blob(currentChunks, { type: microphone.mimeType })
             currentChunks = [];
             LATEST_RECORDING = await makeBlobWithSourceFromBlob(blob, "microphone");
-            RECORDING_START_TIME = null;
         };
         return microphone;
     } else {
@@ -978,6 +1011,7 @@ async function tryInitializeMicrophone() {
  * @returns {Promise<BlobWithSource>}
  */
 async function makeBlobWithSourceFromBlob(audio, source) {
+    console.log(audio);
     let audioBuffer = await audioCtx.decodeAudioData(await audio.arrayBuffer());
     let length = getLengthInSeconds(audioBuffer);
     if (audio.type != "audio/wav") {
@@ -1000,20 +1034,16 @@ function makeBlobWithSourceFromAudioBuffer(audioBuffer, source) {
 
 /**
  * Try to start the microphone. If the microphone is not initialized, we attempt to initialize it first.
- * @param {number | null | undefined} [timeslice=undefined] timeslice If provided, then use this as a timeslice (in milliseconds)
  * @returns {Promise<boolean>} true if the microphone was started 
  */
-async function tryStartMicrophone(timeslice) {
+async function tryStartMicrophone() {
     if (MICROPHONE == null) {
         MICROPHONE = await tryInitializeMicrophone();
     }
-    
+
     if (MICROPHONE != null && MICROPHONE.state == "inactive") {
-        if (timeslice == null || timeslice == undefined) {
-            MICROPHONE.start();
-        } else {
-            MICROPHONE.start(timeslice);
-        }
+        MICROPHONE.start();
+        RECORDING_START_TIME = Date.now();
         return true;
     } else {
         return false;
@@ -1028,11 +1058,46 @@ async function tryStopMicrophone() {
     if (MICROPHONE == null) {
         MICROPHONE = await tryInitializeMicrophone();
     }
-    
+
     if (MICROPHONE != null && MICROPHONE.state == "recording") {
         MICROPHONE.stop();
+        RECORDING_START_TIME = null;
         return true;
     } else {
         return false;
+    }
+}
+
+function getLengthInputValue() {
+    return parseFloat(length_input.value);
+}
+
+async function setAutorecordingLength(timeout) {
+    await stopAutorecording();
+    AUTORECORDER = setInterval(autorecorderTick, timeout * 1000.0)
+    await tryStartMicrophone();
+
+}
+
+async function stopAutorecording() {
+    if (AUTORECORDER != null) {
+        clearInterval(AUTORECORDER);
+        AUTORECORDER = null;
+        await tryStopMicrophone();
+    }
+}
+
+async function autorecorderTick() {
+    if (MICROPHONE == null) {
+        return;
+    }
+    if (MICROPHONE.state == "recording") {
+        console.log("autorecorderTick - stop");
+        await tryStopMicrophone();
+    }
+
+    if (MICROPHONE.state == "inactive") {
+        console.log("autorecorderTick - start");
+        await tryStartMicrophone();
     }
 }
