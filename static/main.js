@@ -688,10 +688,10 @@ async function initAudioDropdownOnChange(value) {
     }
 
     if (value == "microphone_auto") {
-        startAutorecording(getLengthInputValue());
+        startAutorecording();
+        tryStartMicrophone();
     } else {
         stopAutorecording();
-        tryStopMicrophone();
     }
 }
 
@@ -936,16 +936,15 @@ steps_input.onchange = (/** @type {any} */ _) => setEstimatedTimeDisplay();
 length_input.onchange = (/** @type {any} */ _) => {
     setEstimatedTimeDisplay();
     if (getInitAudioDropdownValue() == "microphone_auto") {
-        startAutorecording(getLengthInputValue());
+        startAutorecording();
     }
 };
 
 mic_start.onclick = () => {
     if (getInitAudioDropdownValue() == "microphone_auto") {
-        startAutorecording(getLengthInputValue());
-    } else {
-        tryStartMicrophone();
+        startAutorecording();
     }
+    tryStartMicrophone();
 };
 mic_stop.onclick = () => {
     if (getInitAudioDropdownValue() == "microphone_auto") {
@@ -1035,7 +1034,6 @@ function makeBlobWithSourceFromAudioBuffer(audioBuffer, source) {
 
 /**
  * Try to start the microphone. If the microphone is not initialized, we attempt to initialize it first.
- * @returns {Promise<boolean>} true if the microphone was started 
  */
 async function tryStartMicrophone() {
     if (MICROPHONE == null) {
@@ -1045,14 +1043,11 @@ async function tryStartMicrophone() {
     if (MICROPHONE != null && MICROPHONE.state == "inactive") {
         MICROPHONE.start();
         RECORDING_START_TIME = Date.now();
-        return true;
-    } else {
-        return false;
     }
 }
 
 /**
- * Try to start the microphone. If the microphone is not initialized, we attempt to initialize it first.
+ * Try to stop the microphone. If the microphone is not initialized or already stopped, nothing happens.
  */
 async function tryStopMicrophone() {
     if (MICROPHONE == null) {
@@ -1069,17 +1064,16 @@ function getLengthInputValue() {
     return parseFloat(length_input.value);
 }
 
-async function startAutorecording(timeout) {
-    await stopAutorecording();
-    AUTORECORDER = setInterval(autorecorderTick, timeout * 1000.0)
-    await tryStartMicrophone();
+async function startAutorecording() {
+    if (AUTORECORDER == null) {
+        AUTORECORDER = setInterval(autorecorderTick, 100.0);
+    }
 }
 
 async function stopAutorecording() {
     if (AUTORECORDER != null) {
         clearInterval(AUTORECORDER);
         AUTORECORDER = null;
-        await tryStopMicrophone();
     }
 }
 
@@ -1087,7 +1081,8 @@ async function autorecorderTick() {
     if (MICROPHONE == null) {
         return;
     }
-    if (MICROPHONE.state == "recording") {
+    let current_recording_time = getCurrentRecordingTime();
+    if (current_recording_time != null && current_recording_time >= getLengthInputValue()) {
         await tryStopMicrophone();
     }
 
