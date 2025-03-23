@@ -44,8 +44,8 @@ async function queueIfNeeded() {
         try {
             // Build and send request
             const { url, body } = buildGenerationRequest(settings);
-            const response = await fetch(url, { method: "POST", body})
-            
+            const response = await fetch(url, { method: "POST", body })
+
             // Set up audioBuffer + node
             const arrayBuffer = await response.arrayBuffer();
             const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
@@ -688,8 +688,9 @@ async function initAudioDropdownOnChange(value) {
     }
 
     if (value == "microphone_auto") {
-        setAutorecordingLength(getLengthInputValue());
+        startAutorecording(getLengthInputValue());
     } else {
+        stopAutorecording();
         tryStopMicrophone();
     }
 }
@@ -934,17 +935,25 @@ steps_input.onchange = (/** @type {any} */ _) => setEstimatedTimeDisplay();
 
 length_input.onchange = (/** @type {any} */ _) => {
     setEstimatedTimeDisplay();
-    if (getInitAudioDropdownValue() == "microphone_auto")
-    {
-        setAutorecordingLength(getLengthInputValue());
-    }
-    else {
-        stopAutorecording();
+    if (getInitAudioDropdownValue() == "microphone_auto") {
+        startAutorecording(getLengthInputValue());
     }
 };
 
-mic_start.onclick = () => { tryStartMicrophone(); }
-mic_stop.onclick = () => { tryStopMicrophone(); }
+mic_start.onclick = () => {
+    if (getInitAudioDropdownValue() == "microphone_auto") {
+        startAutorecording(getLengthInputValue());
+    } else {
+        tryStartMicrophone();
+    }
+};
+mic_stop.onclick = () => {
+    if (getInitAudioDropdownValue() == "microphone_auto") {
+        stopAutorecording();
+    } else {
+        tryStopMicrophone();
+    }
+};
 
 setInterval(queueIfNeeded, 1000);
 setInterval(updateUI, 100);
@@ -982,17 +991,10 @@ async function tryInitializeMicrophone() {
         /** @type {Blob[]} */
         let currentChunks = [];
         microphone.ondataavailable = (e) => {
-            console.log("Pushing microphone data...");
             currentChunks.push(e.data);
-            console.log(e.data.type);
         };
 
-        microphone.onstart = (e) => {
-            console.log("Started mic");
-        }
-
         microphone.onstop = async (e) => {
-            console.log("Stopped Mic");
             let blob = new Blob(currentChunks, { type: microphone.mimeType })
             currentChunks = [];
             LATEST_RECORDING = await makeBlobWithSourceFromBlob(blob, "microphone");
@@ -1011,7 +1013,6 @@ async function tryInitializeMicrophone() {
  * @returns {Promise<BlobWithSource>}
  */
 async function makeBlobWithSourceFromBlob(audio, source) {
-    console.log(audio);
     let audioBuffer = await audioCtx.decodeAudioData(await audio.arrayBuffer());
     let length = getLengthInSeconds(audioBuffer);
     if (audio.type != "audio/wav") {
@@ -1052,19 +1053,15 @@ async function tryStartMicrophone() {
 
 /**
  * Try to start the microphone. If the microphone is not initialized, we attempt to initialize it first.
- * @returns {Promise<boolean>} true if the microphone was stopped.
  */
 async function tryStopMicrophone() {
     if (MICROPHONE == null) {
-        MICROPHONE = await tryInitializeMicrophone();
-    }
-
-    if (MICROPHONE != null && MICROPHONE.state == "recording") {
+        return;
+    } 
+    
+    if (MICROPHONE.state == "recording") {
         MICROPHONE.stop();
         RECORDING_START_TIME = null;
-        return true;
-    } else {
-        return false;
     }
 }
 
@@ -1072,11 +1069,10 @@ function getLengthInputValue() {
     return parseFloat(length_input.value);
 }
 
-async function setAutorecordingLength(timeout) {
+async function startAutorecording(timeout) {
     await stopAutorecording();
     AUTORECORDER = setInterval(autorecorderTick, timeout * 1000.0)
     await tryStartMicrophone();
-
 }
 
 async function stopAutorecording() {
@@ -1092,12 +1088,10 @@ async function autorecorderTick() {
         return;
     }
     if (MICROPHONE.state == "recording") {
-        console.log("autorecorderTick - stop");
         await tryStopMicrophone();
     }
 
     if (MICROPHONE.state == "inactive") {
-        console.log("autorecorderTick - start");
         await tryStartMicrophone();
     }
 }
