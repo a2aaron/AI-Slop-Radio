@@ -200,12 +200,13 @@ function getPromptSettings() {
  * @returns {BlobWithSource | null}
  */
 function getInitAudioBlob() {
-    switch (parseInitAudioDropdownValue(init_audio_dropdown.value)) {
+    switch (getInitAudioDropdownValue()) {
         case "off": return null;
         case "file": return UPLOADED_AUDIO;
         // Try to return latest playlist item. Otherwise, fallback to uploaded audio.
         case "wander": return getLatestPlaylistItemBlob() ?? UPLOADED_AUDIO;
-        case "microphone": return null;
+        case "microphone": return LATEST_RECORDING;
+        case "microphone_auto": throw Error("Not implemented");
     }
 }
 /**
@@ -361,11 +362,8 @@ class PlaylistItem extends HTMLElement {
         if (this.blob == null || this.buffer == null) {
             return null;
         }
-        return {
-            audio: this.blob,
-            source: `${this.promptSettings?.positive_prompt} ${this.promptSettings?.seed} (@ ${this.queueTime?.toFixed(2)})`,
-            length: getLengthInSeconds(this.buffer),
-        };
+        let source = `${this.promptSettings?.positive_prompt} ${this.promptSettings?.seed} (@ ${this.queueTime?.toFixed(2)})`;
+        return makeBlobWithSourceFromAudioBuffer(this.buffer, source);
     }
 
     /**
@@ -596,6 +594,7 @@ function updateUI() {
     setRemainingBufferDisplay();
     setCurrentTimeDisplay();
     updateQueue();
+    setMicrophoneStatus();
 }
 
 function setEstimatedTimeDisplay() {
@@ -641,32 +640,38 @@ function setVolumeFromSlider() {
 }
 
 
+
 /**
- * @typedef {"off" | "file" | "wander" | "microphone"} InitAudioDropdownValue
- * @param {string} input 
+ * @typedef {"off" | "file" | "wander" | "microphone" | "microphone_auto"} InitAudioDropdownValue
  * @returns {InitAudioDropdownValue}
  */
-function parseInitAudioDropdownValue(input) {
-    switch (input) {
+function getInitAudioDropdownValue() {
+    switch (init_audio_dropdown.value) {
         case "off":
         case "file":
         case "wander":
-        case "microphone": return input;
-        default: throw new Error(`Invalid dropdown value: ${input}`)
-    }    
+        case "microphone": 
+        case "microphone_auto": return init_audio_dropdown.value;
+        default: throw new Error(`Invalid dropdown value: ${init_audio_dropdown.value}`)
+    }
 }
 
 async function setFileUploaded() {
     if (init_audio_upload_input.files != null && init_audio_upload_input.files?.length > 0) {
         let file = init_audio_upload_input.files[0];
-        let audioBuffer = await audioCtx.decodeAudioData(await file.arrayBuffer());
-        let length = getLengthInSeconds(audioBuffer);
+
         length_input.value = length.toFixed(2);
-        UPLOADED_AUDIO = {
-            audio: file,
-            source: file.name,
-            length: length,
-        };
+        UPLOADED_AUDIO = await makeBlobWithSourceFromBlob(file, file.name);
+    }
+}
+
+async function initAudioDropdownOnChange() {
+    setEnabilityInitAudioControls();
+
+    if (getInitAudioDropdownValue() == "microphone" || getInitAudioDropdownValue() == "microphone_auto") {
+        if (MICROPHONE == null) {
+            MICROPHONE = await tryInitializeMicrophone();
+        }
     }
 }
 
@@ -674,8 +679,7 @@ async function setFileUploaded() {
  * Enable/disable various elements on the page based on the init audio dropdown
  */
 function setEnabilityInitAudioControls() {
-    let value = parseInitAudioDropdownValue(init_audio_dropdown.value);
-    switch (value) {
+    switch (getInitAudioDropdownValue()) {
         case "off":
             setEnabled(length_input, true);
             setEnabled(mask_args_checkbox, false);
@@ -683,13 +687,23 @@ function setEnabilityInitAudioControls() {
             setEnabled(init_noise_level_input, false);
             break;
         case "file":
-        case "wander":
             setEnabled(length_input, false);
             setEnabled(mask_args_checkbox, true);
             setEnabled(init_audio_upload_input, true);
             setEnabled(init_noise_level_input, true);
             break;
+        case "wander":
+            setEnabled(length_input, false);
+            setEnabled(mask_args_checkbox, true);
+            setEnabled(init_audio_upload_input, false);
+            setEnabled(init_noise_level_input, true);
+            break;
         case "microphone":
+            setEnabled(length_input, false);
+            setEnabled(mask_args_checkbox, true);
+            setEnabled(init_audio_upload_input, false);
+            setEnabled(init_noise_level_input, true);
+        case "microphone_auto":
             setEnabled(length_input, true);
             setEnabled(mask_args_checkbox, true);
             setEnabled(init_audio_upload_input, false);
@@ -718,7 +732,7 @@ function setEnabilityMaskArgs() {
  */
 function setEnabled(control, enabled) {
     let disabled = !enabled;
-    control.setAttribute("pseudo-disabled", disabled.toString());
+    control.dataset.pseudoDisabled = disabled.toString();
 }
 
 // #####################
@@ -811,6 +825,19 @@ const MAX_RECENT_GENERATIONS = 5;
 /** @type {BlobWithSource | null} */
 let UPLOADED_AUDIO = null;
 
+/** @type {BlobWithSource | null} */
+let LATEST_RECORDING = null;
+
+/** @type {number | null} */
+let RECORDING_START_TIME = null;
+
+/** @type {MediaRecorder | null} */
+let MICROPHONE = null;
+
+/** @typedef {number} SetIntervalID */
+/** @type {SetIntervalID | null} */
+let AUTORECORDER = null;
+
 customElements.define("playlist-item", PlaylistItem);
 
 const audioCtx = new window.AudioContext();
@@ -855,6 +882,10 @@ const softness_left_input = getElementTyped("softness_left", HTMLInputElement);
 const softness_right_input = getElementTyped("softness_right", HTMLInputElement);
 const marination_input = getElementTyped("marination", HTMLInputElement);
 
+const mic_status_span = getElementTyped("mic_status", HTMLSpanElement);
+const mic_start = getElementTyped("mic_start", HTMLButtonElement);
+const mic_stop = getElementTyped("mic_stop", HTMLButtonElement);
+
 const queueList = getElementTyped("playlist", HTMLElement);
 
 // Event Handlers
@@ -871,7 +902,9 @@ init_audio_upload_input.onchange = async (_) => {
     await setFileUploaded();
 }
 
-init_audio_dropdown.onchange = (e) => setEnabilityInitAudioControls();
+init_audio_dropdown.onchange = async (e) => {
+    await initAudioDropdownOnChange();
+};
 
 mask_args_checkbox.onchange = (_) => setEnabilityMaskArgs();
 
@@ -881,12 +914,125 @@ steps_input.onchange = (_) => setEstimatedTimeDisplay();
 
 length_input.onchange = (_) => setEstimatedTimeDisplay();
 
+mic_start.onclick = () => { tryStartMicrophone(); }
+mic_stop.onclick = () => { tryStopMicrophone(); }
+
 setInterval(queueIfNeeded, 1000);
 setInterval(updateUI, 100);
 
 updateUI();
 setVolumeFromSlider();
-setEnabilityInitAudioControls();
+initAudioDropdownOnChange()
 setEnabilityMaskArgs();
 setFileUploaded();
 
+function setMicrophoneStatus() {
+    if (MICROPHONE == null) {
+        mic_status_span.innerText = "Not initialized";
+    } else {
+        let latest_recorded = LATEST_RECORDING != null ? `${LATEST_RECORDING.length.toFixed(2)}s` : "none";
+        const current_recording_time = RECORDING_START_TIME != null ? (Date.now() - RECORDING_START_TIME) / 1000.0 : null;
+        let currently_recorded = current_recording_time != null ? `${current_recording_time.toFixed(2)}s` : "none";
+        mic_status_span.innerText = `${MICROPHONE.state}\ncurrently recorded: ${currently_recorded}\nlatest recorded: ${latest_recorded}`;
+    }
+}
+
+/**
+ * Try to initialize the microphone. This method also sets the callbacks on the microphone as needed 
+ * @returns {Promise<MediaRecorder | null>}
+ */
+async function tryInitializeMicrophone() {
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        let mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, });
+        let microphone = new MediaRecorder(mediaStream);
+
+        /** @type {Blob[]} */
+        let currentChunks = [];
+        microphone.ondataavailable = (e) => {
+            console.log("Pushing microphone data...");
+            currentChunks.push(e.data);
+            console.log(e.data.type);
+        };
+
+        microphone.onstart = (e) => {
+            RECORDING_START_TIME = Date.now();
+        }
+
+        microphone.onstop = async (e) => {
+            let blob = new Blob(currentChunks, { type: microphone.mimeType })
+            currentChunks = [];
+            LATEST_RECORDING = await makeBlobWithSourceFromBlob(blob, "microphone");
+            RECORDING_START_TIME = null;
+        };
+        return microphone;
+    } else {
+        console.log("getUserMedia not supported on your browser!");
+        return null;
+    }
+}
+
+/**
+ * Create a BlobWithSource out of a Blob. If the Blob is not a wav file, it is converted to be one.
+ * @param {Blob} audio 
+ * @param {string} source 
+ * @returns {Promise<BlobWithSource>}
+ */
+async function makeBlobWithSourceFromBlob(audio, source) {
+    let audioBuffer = await audioCtx.decodeAudioData(await audio.arrayBuffer());
+    let length = getLengthInSeconds(audioBuffer);
+    if (audio.type != "audio/wav") {
+        audio = getWavBlob(audioBuffer);
+    }
+    return { audio, source, length }
+}
+
+/**
+ * Create a BlobWithSource out of an AudioBuffer.
+ * @param {AudioBuffer} audioBuffer
+ * @param {string} source
+ * @returns {BlobWithSource}
+ */
+function makeBlobWithSourceFromAudioBuffer(audioBuffer, source) {
+    let length = getLengthInSeconds(audioBuffer);
+    let audio = getWavBlob(audioBuffer);
+    return { audio, source, length }
+}
+
+/**
+ * Try to start the microphone. If the microphone is not initialized, we attempt to initialize it first.
+ * @param {number | null | undefined} [timeslice=undefined] timeslice If provided, then use this as a timeslice (in milliseconds)
+ * @returns {Promise<boolean>} true if the microphone was started 
+ */
+async function tryStartMicrophone(timeslice) {
+    if (MICROPHONE == null) {
+        MICROPHONE = await tryInitializeMicrophone();
+    }
+    
+    if (MICROPHONE != null && MICROPHONE.state == "inactive") {
+        if (timeslice == null || timeslice == undefined) {
+            MICROPHONE.start();
+        } else {
+            MICROPHONE.start(timeslice);
+        }
+        return true;
+    } else {
+        return false;
+    }
+}
+
+/**
+ * Try to start the microphone. If the microphone is not initialized, we attempt to initialize it first.
+ * @returns {Promise<boolean>} true if the microphone was stopped.
+ */
+async function tryStopMicrophone() {
+    if (MICROPHONE == null) {
+        MICROPHONE = await tryInitializeMicrophone();
+    }
+    
+    if (MICROPHONE != null && MICROPHONE.state == "recording") {
+        MICROPHONE.stop();
+        return true;
+    } else {
+        return false;
+    }
+}

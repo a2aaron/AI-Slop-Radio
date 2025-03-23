@@ -61,6 +61,7 @@
                         <option value="file">File</option>
                         <option value="wander">Wander</option>
                         <option value="microphone">Microphone</option>
+                        <option value="microphone_auto">Microphone (Auto)</option>
                     </select>
                 </ui-control>
                 <ui-control>
@@ -74,6 +75,11 @@
                 <ui-control>
                     <label for="init_noise_level">Init Noise Level</label>
                     <input type="number" id="init_noise_level" name="init_noise_level" value="1.0" step="any"></input>
+                </ui-control>
+                <p>Microphone: <span id="mic_status"></span></p>
+                <ui-control>
+                    <button id="mic_start">Start</button>
+                    <button id="mic_stop">Stop</button>
                 </ui-control>
                 <section>
                     <h3>Mask Arguments</h3>

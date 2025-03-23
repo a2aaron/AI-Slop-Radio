@@ -80,10 +80,10 @@ input:invalid {
     background: khaki;
 }
 
-[pseudo-disabled="true"] {
+[data-pseudo-disabled="true"] {
     opacity: 0.5;
 }
 
-label:has(~ [pseudo-disabled="true"]) {
+label:has(~ [data-pseudo-disabled="true"]) {
     opacity: 0.5;
 }
