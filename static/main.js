@@ -19,19 +19,19 @@ async function queueIfNeeded() {
             minimumBuffer = minimumBuffer * 1.25;
         }
         minimumBuffer += 2.0; // Try to maintain at least a two second buffer period
-        
+
         const enoughBuffer = remainingBufferTime() > minimumBuffer;
         if (!enoughBuffer) {
             INFLIGHT_GENERATIONS += 1;
             const now = Date.now();
-            
+
             const item = pushQueueItem(settings);
             if (increment_seed_checkbox.checked) {
                 seed_input.value = (parseInt(seed_input.value) + 1).toString();
             }
             try {
                 // Build and send request
-                const {url, body} = buildGenerationRequest(settings);
+                const { url, body } = buildGenerationRequest(settings);
                 const arrayBuffer = await fetch(url, {
                     method: "POST",
                     body,
@@ -41,15 +41,15 @@ async function queueIfNeeded() {
                 const node = audioCtx.createBufferSource();
                 node.buffer = audioBuffer
                 node.connect(getDestinationNode());
-                
+
                 // Queue audio node
                 const queueTime = getLatestQueuedOrNow();
-                LATEST_QUEUED_TIME = queueTime + getPreciseDuration(settings.length);                
+                LATEST_QUEUED_TIME = queueTime + getPreciseDuration(settings.length);
                 node.start(queueTime);
-                
+
                 // Update playlist 
                 await item.setQueued(audioBuffer, queueTime);
-                
+
                 // Update stats
                 const elapsed = (Date.now() - now) / 1000.0;
                 recordGenerationStats(settings.steps, audioBuffer.duration, elapsed);
@@ -150,7 +150,7 @@ function getPromptSettings() {
     if (inputs.some(input => !input.checkValidity())) {
         return null;
     }
-    
+
     let negative_prompt = null;
     if (negative_prompt_enable_checkbox.checked || negative_prompt_textarea.value != "") {
         negative_prompt = negative_prompt_textarea.value;
@@ -182,18 +182,18 @@ function getPromptSettings() {
         };
     }
 
-   return {
-       "positive_prompt": positive_prompt_textarea.value,
-       "negative_prompt": negative_prompt,
-       "cfg": parseFloat(cfg_input.value),
-       "sigma_min": parseFloat(sigma_min_input.value),
-       "sigma_max": parseFloat(sigma_max_input.value),
-       "seed": parseInt(seed_input.value),
-       "steps": parseInt(steps_input.value),
-       "length": length,
-       "init_audio": init_audio_args,
-       "mask_args": mask_args,
-   }
+    return {
+        "positive_prompt": positive_prompt_textarea.value,
+        "negative_prompt": negative_prompt,
+        "cfg": parseFloat(cfg_input.value),
+        "sigma_min": parseFloat(sigma_min_input.value),
+        "sigma_max": parseFloat(sigma_max_input.value),
+        "seed": parseInt(seed_input.value),
+        "steps": parseInt(steps_input.value),
+        "length": length,
+        "init_audio": init_audio_args,
+        "mask_args": mask_args,
+    }
 }
 
 /**
@@ -248,7 +248,7 @@ function buildGenerationRequest(settings) {
     }
 
     const url = new URL("/radio", window.location.toString());
-    return {url, body};
+    return { url, body };
 }
 
 /**
@@ -256,10 +256,10 @@ function buildGenerationRequest(settings) {
 * @returns {number} The amount of time remaining in the buffer. Zero if there is nothing left in the buffer
 */
 function remainingBufferTime() {
-   if (audioCtx.currentTime > LATEST_QUEUED_TIME) {
-       return 0.0;
-   }
-   return LATEST_QUEUED_TIME - audioCtx.currentTime;
+    if (audioCtx.currentTime > LATEST_QUEUED_TIME) {
+        return 0.0;
+    }
+    return LATEST_QUEUED_TIME - audioCtx.currentTime;
 }
 
 /**
@@ -268,11 +268,11 @@ function remainingBufferTime() {
 * @returns {number} The current time or the latest queued time, whichever is later
 */
 function getLatestQueuedOrNow() {
-   if (audioCtx.currentTime > LATEST_QUEUED_TIME) {
-       return audioCtx.currentTime;
-   } else {
-       return LATEST_QUEUED_TIME;
-   }
+    if (audioCtx.currentTime > LATEST_QUEUED_TIME) {
+        return audioCtx.currentTime;
+    } else {
+        return LATEST_QUEUED_TIME;
+    }
 }
 
 /**
@@ -285,7 +285,7 @@ function getLatestQueuedOrNow() {
 function getPreciseDuration(duration) {
     const MODEL_SAMPLE_RATE = 44100;
     const LATENT_BLOCK_SIZE = 2048;
-    const numBlocks = Math.floor(duration * MODEL_SAMPLE_RATE / LATENT_BLOCK_SIZE) 
+    const numBlocks = Math.floor(duration * MODEL_SAMPLE_RATE / LATENT_BLOCK_SIZE)
     const numSamples = numBlocks * LATENT_BLOCK_SIZE;
     const exactDuration = numSamples / MODEL_SAMPLE_RATE;
     return exactDuration;
@@ -416,12 +416,12 @@ class PlaylistItem extends HTMLElement {
         if (this.queueTime != undefined) {
             const startTime = this.queueTime.toFixed(1);
             const endTime = (this.queueTime + this.promptSettings.length).toFixed(1);
-            text += ` @ t = ${startTime} to ${endTime}`; 
+            text += ` @ t = ${startTime} to ${endTime}`;
         }
-        return text;    
+        return text;
     }
 }
-  
+
 
 /**
  * Place a new item in the visual playlist queue. The item will start in 
@@ -486,7 +486,7 @@ function updateQueue() {
         if (item.queueState == "queued" || item.queueState == "playing") {
             const queueTime = assertExists(item.queueTime);
             const length = assertExists(item.promptSettings).length;
-    
+
             const currentTime = audioCtx.currentTime;
             if (currentTime > queueTime + length && item.queueState == "playing") {
                 item.setDone();
@@ -581,7 +581,7 @@ function getWavBody(buffer) {
         const channel = buffer.getChannelData(channel_i);
         for (let sample_i = 0; sample_i < channel.length; sample_i++) {
             const sample = channel[sample_i];
-            array[channel_i + sample_i * numChannels] = sample; 
+            array[channel_i + sample_i * numChannels] = sample;
         }
     }
 
@@ -806,7 +806,6 @@ let RECENT_STEPSECONDS_INDEX = 0;
 /** @type {PlaylistItem[]} */
 let RECENT_GENERATIONS = [];
 const MAX_RECENT_GENERATIONS = 5;
-
 
 /** @typedef {{ audio: Blob, source: string, length: number }} BlobWithSource */
 /** @type {BlobWithSource | null} */
